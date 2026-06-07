@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Cold Chain</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+
+    <h1>IoT Cold Chain</h1>
+
+    {% if error %}
+    <div class="error">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    {% if not user %}
+
+    <div class="forms">
+
+        <div class="card">
+            <h2>Registro</h2>
+
+            <form method="post" action="/register">
+
+                <label>Usuario</label>
+                <input
+                    type="text"
+                    name="username"
+                    required
+                >
+
+                <label>Contraseña</label>
+                <input
+                    type="password"
+                    name="password"
+                    required
+                >
+
+                <button type="submit">
+                    Crear cuenta
+                </button>
+
+            </form>
+        </div>
+
+        <div class="card">
+
+            <h2>Login</h2>
+
+            <form method="post" action="/login">
+
+                <label>Usuario</label>
+                <input
+                    type="text"
+                    name="username"
+                    required
+                >
+
+                <label>Contraseña</label>
+                <input
+                    type="password"
+                    name="password"
+                    required
+                >
+
+                <button type="submit">
+                    Ingresar
+                </button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+    {% else %}
+
+    <div class="card">
+
+        <h2>Bienvenido {{ user }}</h2>
+
+        <form method="post" action="/logout">
+            <button type="submit">
+                Cerrar sesión
+            </button>
+        </form>
+
+    </div>
+
+    <div class="card">
+
+        <h2>Últimas mediciones</h2>
+
+        <table>
+
+            <thead>
+
+            <tr>
+                <th>Dispositivo</th>
+                <th>Temperatura</th>
+                <th>Humedad</th>
+                <th>Timestamp</th>
+            </tr>
+
+            </thead>
+
+            <tbody>
+
+            {% for r in rows %}
+
+            <tr>
+                <td>{{ r.device_id }}</td>
+                <td>{{ r.temperature }}</td>
+                <td>{{ r.humidity }}</td>
+                <td>{{ r.ts }}</td>
+            </tr>
+
+            {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+    {% endif %}
+
+</div>
+
+</body>
+</html>

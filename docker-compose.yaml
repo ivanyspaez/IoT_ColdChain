@@ -1,0 +1,13 @@
+services:
+  web:
+    build: .
+    container_name: iot_web
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: "cambia-esta-clave-de-sesion"
+      DEVICE_ID: "esp32-coldchain-001"
+      DEVICE_SECRET: "cambia-esta-clave-larga-y-unica"
+      DATABASE_URL: "sqlite:///./data/app.db"
+    volumes:
+      - ./data:/app/data
