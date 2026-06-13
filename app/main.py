@@ -1,6 +1,9 @@
 import os
 import json
 import secrets
+import hmac
+import hashlib
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -31,6 +34,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
 ACCESS_TOKEN_COOKIE = "access_token"
+TELEMETRY_WINDOW_SECONDS = 300  # 5 minutos
 
 # =========================
 # DB
@@ -75,6 +79,7 @@ class Product(Base):
 
     device_id = Column(String(120), unique=True, index=True, nullable=False)
     api_key = Column(String(200), unique=True, index=True, nullable=False)
+    device_secret = Column(String(200), unique=True, index=True, nullable=True)
 
     created_at = Column(
         DateTime,
@@ -101,6 +106,44 @@ class Telemetry(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_device_secret_column():
+    """
+    Agrega la columna device_secret a SQLite si la tabla products ya existía antes.
+    """
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(products)").fetchall()
+        cols = {row[1] for row in rows}
+
+        if "device_secret" not in cols:
+            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN device_secret TEXT")
+
+
+def backfill_device_secrets():
+    """
+    Si ya existían productos sin device_secret, se les asigna uno nuevo.
+    """
+    db = SessionLocal()
+    try:
+        changed = False
+        products = db.query(Product).all()
+        for p in products:
+            if not p.device_secret:
+                p.device_secret = secrets.token_urlsafe(48)
+                changed = True
+
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
+ensure_device_secret_column()
+backfill_device_secrets()
 
 # =========================
 # APP
@@ -173,6 +216,7 @@ def serialize_product(row: Product) -> dict:
         "product_serial": row.product_serial,
         "device_id": row.device_id,
         "api_key": row.api_key,
+        "device_secret": row.device_secret,
         "created_at": row.created_at.isoformat(),
     }
 
@@ -464,6 +508,7 @@ def create_product(
         )
 
     api_key = secrets.token_urlsafe(32)
+    device_secret = secrets.token_urlsafe(48)
 
     product = Product(
         owner_id=user.id,
@@ -471,6 +516,7 @@ def create_product(
         product_serial=product_serial,
         device_id=device_id,
         api_key=api_key,
+        device_secret=device_secret,
     )
     db.add(product)
     db.commit()
@@ -503,15 +549,41 @@ def api_history(device_id: Optional[str] = None, limit: int = 100, db: Session =
 @app.post("/telemetry")
 async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
     api_key = request.headers.get("x-api-key")
-    if not api_key:
-        raise HTTPException(status_code=401, detail="X-API-KEY faltante")
+    timestamp = request.headers.get("x-timestamp")
+    signature = request.headers.get("x-signature")
+
+    if not api_key or not timestamp or not signature:
+        raise HTTPException(status_code=401, detail="Faltan headers de autenticación")
 
     product = db.query(Product).filter(Product.api_key == api_key).first()
     if not product:
         raise HTTPException(status_code=403, detail="API key inválida")
 
+    if not product.device_secret:
+        raise HTTPException(status_code=409, detail="El producto no tiene device_secret configurado")
+
     try:
-        data = await request.json()
+        ts_int = int(timestamp)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Timestamp inválido")
+
+    now = int(time.time())
+    if abs(now - ts_int) > TELEMETRY_WINDOW_SECONDS:
+        raise HTTPException(status_code=403, detail="Timestamp fuera de ventana")
+
+    body = await request.body()
+
+    expected = hmac.new(
+        product.device_secret.encode(),
+        f"{product.device_id}.{timestamp}.".encode() + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=403, detail="Firma inválida")
+
+    try:
+        data = json.loads(body.decode("utf-8"))
     except Exception:
         raise HTTPException(status_code=400, detail="JSON inválido")
 
