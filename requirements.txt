@@ -3,5 +3,5 @@ uvicorn[standard]
 jinja2
 python-multipart
 sqlalchemy
-itsdangerous
 passlib
+python-jose[cryptography]

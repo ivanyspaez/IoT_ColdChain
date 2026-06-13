@@ -1,15 +1,17 @@
 import os
 import json
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.sessions import SessionMiddleware
 
 from passlib.context import CryptContext
+from jose import jwt, JWTError
+
 from sqlalchemy import (
     create_engine,
     Column,
@@ -25,7 +27,10 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # CONFIG
 # =========================
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/telemetry.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
+SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_COOKIE = "access_token"
 
 # =========================
 # DB
@@ -68,8 +73,8 @@ class Product(Base):
     product_name = Column(String(120), nullable=False)
     product_serial = Column(String(120), unique=True, index=True, nullable=False)
 
-    # Se vincula con el ESP32 que envía telemetría
     device_id = Column(String(120), unique=True, index=True, nullable=False)
+    api_key = Column(String(200), unique=True, index=True, nullable=False)
 
     created_at = Column(
         DateTime,
@@ -104,14 +109,6 @@ app = FastAPI(title="IoT ColdChain Dashboard")
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Esto es lo que faltaba
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=SECRET_KEY,
-    same_site="lax",
-    https_only=False
-)
-
 
 def get_db():
     db = SessionLocal()
@@ -139,8 +136,26 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
+def create_access_token(username: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": username,
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
 def current_username(request: Request) -> Optional[str]:
-    return request.session.get("user")
+    token = request.cookies.get(ACCESS_TOKEN_COOKIE)
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
 
 
 def require_user(request: Request) -> str:
@@ -157,6 +172,7 @@ def serialize_product(row: Product) -> dict:
         "product_name": row.product_name,
         "product_serial": row.product_serial,
         "device_id": row.device_id,
+        "api_key": row.api_key,
         "created_at": row.created_at.isoformat(),
     }
 
@@ -217,7 +233,6 @@ def dashboard(
 
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        request.session.clear()
         return render_index(
             request,
             {
@@ -314,9 +329,19 @@ def register(
     )
     db.add(user)
     db.commit()
+    db.refresh(user)
 
-    request.session["user"] = username
-    return RedirectResponse("/", status_code=303)
+    token = create_access_token(username)
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+    return response
 
 
 @app.post("/login")
@@ -344,14 +369,24 @@ def login(
             status_code=401,
         )
 
-    request.session["user"] = username
-    return RedirectResponse("/", status_code=303)
+    token = create_access_token(username)
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+    return response
 
 
 @app.post("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/", status_code=303)
+def logout():
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(ACCESS_TOKEN_COOKIE)
+    return response
 
 
 @app.post("/products/new")
@@ -366,7 +401,6 @@ def create_product(
 
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        request.session.clear()
         return RedirectResponse("/", status_code=303)
 
     product_name = product_name.strip()
@@ -429,11 +463,14 @@ def create_product(
             status_code=400,
         )
 
+    api_key = secrets.token_urlsafe(32)
+
     product = Product(
         owner_id=user.id,
         product_name=product_name,
         product_serial=product_serial,
         device_id=device_id,
+        api_key=api_key,
     )
     db.add(product)
     db.commit()
@@ -465,6 +502,14 @@ def api_history(device_id: Optional[str] = None, limit: int = 100, db: Session =
 
 @app.post("/telemetry")
 async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
+    api_key = request.headers.get("x-api-key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="X-API-KEY faltante")
+
+    product = db.query(Product).filter(Product.api_key == api_key).first()
+    if not product:
+        raise HTTPException(status_code=403, detail="API key inválida")
+
     try:
         data = await request.json()
     except Exception:
@@ -473,6 +518,9 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
     device_id = str(data.get("device_id", "unknown"))
     temperature = data.get("temperature", None)
     humidity = data.get("humidity", None)
+
+    if device_id != product.device_id:
+        raise HTTPException(status_code=403, detail="device_id no coincide con la API key")
 
     if temperature is None or humidity is None:
         raise HTTPException(status_code=400, detail="temperature y humidity son obligatorios")
