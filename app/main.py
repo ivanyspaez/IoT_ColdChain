@@ -1,30 +1,35 @@
 import os
-import hmac
 import json
-import time
-import hashlib
-import inspect
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import FastAPI, Request, Form, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request, HTTPException, Form, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from passlib.context import CryptContext
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float, DateTime, Text
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    Text,
 )
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-# ===== CONFIG =====
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-DEVICE_ID = os.getenv("DEVICE_ID", "esp32-coldchain-001")
-DEVICE_SECRET = os.getenv("DEVICE_SECRET", "device-secret")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+# =========================
+# CONFIG
+# =========================
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/telemetry.db")
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
 
-# ===== DB =====
+# =========================
+# DB
+# =========================
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
@@ -38,62 +43,74 @@ pwd_context = CryptContext(
     deprecated="auto"
 )
 
-
+# =========================
+# MODELS
+# =========================
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(80), unique=True, index=True, nullable=False)
     password_hash = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, index=True, nullable=False)
+
+    product_name = Column(String(120), nullable=False)
+    product_serial = Column(String(120), unique=True, index=True, nullable=False)
+
+    # Se vincula con el ESP32 que envía telemetría
+    device_id = Column(String(120), unique=True, index=True, nullable=False)
+
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
 
 
 class Telemetry(Base):
     __tablename__ = "telemetry"
+
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String(120), index=True, nullable=False)
     temperature = Column(Float, nullable=False)
     humidity = Column(Float, nullable=False)
-    ts = Column(Integer, nullable=False)
-    received_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    battery = Column(Integer, nullable=True)
+    status = Column(String(50), nullable=True)
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+    raw_json = Column(Text, nullable=True)
 
 
 Base.metadata.create_all(bind=engine)
 
-# ===== APP =====
-app = FastAPI()
+# =========================
+# APP
+# =========================
+app = FastAPI(title="IoT ColdChain Dashboard")
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Esto es lo que faltaba
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     same_site="lax",
     https_only=False
 )
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-# Detecta la firma real de TemplateResponse para evitar el TypeError entre versiones
-_TEMPLATE_PARAMS = list(inspect.signature(templates.TemplateResponse).parameters.keys())
-_TEMPLATE_REQUEST_FIRST = len(_TEMPLATE_PARAMS) > 0 and _TEMPLATE_PARAMS[0] == "request"
-
-
-def render_index(request: Request, context: dict, status_code: int = 200):
-    ctx = {"request": request, **context}
-
-    if _TEMPLATE_REQUEST_FIRST:
-        # Formato: TemplateResponse(request, name, context, ...)
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            ctx,
-            status_code=status_code
-        )
-
-    # Formato: TemplateResponse(name, context, ...)
-    return templates.TemplateResponse(
-        "index.html",
-        ctx,
-        status_code=status_code
-    )
 
 
 def get_db():
@@ -104,6 +121,16 @@ def get_db():
         db.close()
 
 
+def render_index(request: Request, context: dict, status_code: int = 200):
+    ctx = {"request": request, **context}
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=ctx,
+        status_code=status_code,
+    )
+
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -112,36 +139,136 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def current_username(request: Request):
+def current_username(request: Request) -> Optional[str]:
     return request.session.get("user")
 
 
-def require_user(request: Request):
+def require_user(request: Request) -> str:
     user = current_username(request)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
     return user
 
 
-def latest_telemetry(db: Session, limit: int = 20):
-    return db.query(Telemetry).order_by(Telemetry.id.desc()).limit(limit).all()
+def serialize_product(row: Product) -> dict:
+    return {
+        "id": row.id,
+        "owner_id": row.owner_id,
+        "product_name": row.product_name,
+        "product_serial": row.product_serial,
+        "device_id": row.device_id,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def serialize_telemetry(row: Telemetry) -> dict:
+    return {
+        "id": row.id,
+        "device_id": row.device_id,
+        "temperature": row.temperature,
+        "humidity": row.humidity,
+        "battery": row.battery,
+        "status": row.status,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def get_latest(db: Session, device_id: Optional[str] = None):
+    q = db.query(Telemetry)
+    if device_id:
+        q = q.filter(Telemetry.device_id == device_id)
+    return q.order_by(Telemetry.id.desc()).first()
+
+
+def get_history(db: Session, device_id: Optional[str] = None, limit: int = 100):
+    q = db.query(Telemetry)
+    if device_id:
+        q = q.filter(Telemetry.device_id == device_id)
+    rows = q.order_by(Telemetry.id.desc()).limit(limit).all()
+    return list(reversed(rows))
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, db: Session = Depends(get_db)):
-    user = current_username(request)
-    rows = latest_telemetry(db) if user else []
+def dashboard(
+    request: Request,
+    product_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    username = current_username(request)
+
+    if not username:
+        return render_index(
+            request,
+            {
+                "user": None,
+                "products": [],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "error": None,
+                "success": None,
+            },
+        )
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        request.session.clear()
+        return render_index(
+            request,
+            {
+                "user": None,
+                "products": [],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "error": "Sesión inválida. Vuelve a iniciar sesión.",
+                "success": None,
+            },
+            status_code=401,
+        )
+
+    products = (
+        db.query(Product)
+        .filter(Product.owner_id == user.id)
+        .order_by(Product.id.desc())
+        .all()
+    )
+
+    selected_product = None
+    if product_id is not None:
+        selected_product = next((p for p in products if p.id == product_id), None)
+    if selected_product is None and products:
+        selected_product = products[0]
+
+    latest = None
+    history = []
+    if selected_product is not None:
+        latest_row = get_latest(db, selected_product.device_id)
+        if latest_row:
+            latest = serialize_telemetry(latest_row)
+        history_rows = get_history(db, selected_product.device_id, limit=100)
+        history = [serialize_telemetry(r) for r in history_rows]
+
     return render_index(
         request,
         {
-            "user": user,
-            "rows": rows,
+            "user": username,
+            "products": [serialize_product(p) for p in products],
+            "selected_product": serialize_product(selected_product) if selected_product else None,
+            "latest": latest,
+            "history": history,
             "error": None,
-        }
+            "success": None,
+        },
     )
 
 
-@app.post("/register", response_class=HTMLResponse)
+@app.post("/register")
 def register(
     request: Request,
     username: str = Form(...),
@@ -155,10 +282,14 @@ def register(
             request,
             {
                 "user": None,
-                "rows": [],
+                "products": [],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
                 "error": "Usuario mínimo 3 caracteres y contraseña mínimo 6.",
+                "success": None,
             },
-            status_code=400
+            status_code=400,
         )
 
     existing = db.query(User).filter(User.username == username).first()
@@ -167,15 +298,19 @@ def register(
             request,
             {
                 "user": None,
-                "rows": [],
+                "products": [],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
                 "error": "Ese usuario ya existe.",
+                "success": None,
             },
-            status_code=400
+            status_code=400,
         )
 
     user = User(
         username=username,
-        password_hash=hash_password(password)
+        password_hash=hash_password(password),
     )
     db.add(user)
     db.commit()
@@ -184,7 +319,7 @@ def register(
     return RedirectResponse("/", status_code=303)
 
 
-@app.post("/login", response_class=HTMLResponse)
+@app.post("/login")
 def login(
     request: Request,
     username: str = Form(...),
@@ -199,10 +334,14 @@ def login(
             request,
             {
                 "user": None,
-                "rows": [],
+                "products": [],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
                 "error": "Credenciales inválidas.",
+                "success": None,
             },
-            status_code=401
+            status_code=401,
         )
 
     request.session["user"] = username
@@ -215,76 +354,157 @@ def logout(request: Request):
     return RedirectResponse("/", status_code=303)
 
 
-@app.get("/api/telemetry/latest")
-def api_latest(request: Request, db: Session = Depends(get_db)):
-    require_user(request)
-    rows = latest_telemetry(db, limit=20)
-    return [
-        {
-            "device_id": r.device_id,
-            "temperature": r.temperature,
-            "humidity": r.humidity,
-            "ts": r.ts,
-            "received_at": r.received_at.isoformat(),
+@app.post("/products/new")
+def create_product(
+    request: Request,
+    product_name: str = Form(...),
+    product_serial: str = Form(...),
+    device_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    username = require_user(request)
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        request.session.clear()
+        return RedirectResponse("/", status_code=303)
+
+    product_name = product_name.strip()
+    product_serial = product_serial.strip()
+    device_id = device_id.strip()
+
+    if not product_name or not product_serial or not device_id:
+        return render_index(
+            request,
+            {
+                "user": username,
+                "products": [
+                    serialize_product(p)
+                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
+                ],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "error": "Todos los campos del producto son obligatorios.",
+                "success": None,
+            },
+            status_code=400,
+        )
+
+    duplicate_serial = db.query(Product).filter(Product.product_serial == product_serial).first()
+    if duplicate_serial:
+        return render_index(
+            request,
+            {
+                "user": username,
+                "products": [
+                    serialize_product(p)
+                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
+                ],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "error": "Ese serial ya está registrado.",
+                "success": None,
+            },
+            status_code=400,
+        )
+
+    duplicate_device = db.query(Product).filter(Product.device_id == device_id).first()
+    if duplicate_device:
+        return render_index(
+            request,
+            {
+                "user": username,
+                "products": [
+                    serialize_product(p)
+                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
+                ],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "error": "Ese device_id ya está asociado a otro producto.",
+                "success": None,
+            },
+            status_code=400,
+        )
+
+    product = Product(
+        owner_id=user.id,
+        product_name=product_name,
+        product_serial=product_serial,
+        device_id=device_id,
+    )
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    return RedirectResponse(f"/?product_id={product.id}", status_code=303)
+
+
+@app.get("/api/latest")
+def api_latest(device_id: Optional[str] = None, db: Session = Depends(get_db)):
+    row = get_latest(db, device_id=device_id)
+    if not row:
+        return {
+            "device_id": None,
+            "temperature": None,
+            "humidity": None,
+            "battery": None,
+            "status": None,
+            "created_at": None,
         }
-        for r in rows
-    ]
+    return serialize_telemetry(row)
 
 
-@app.post("/api/telemetry")
-async def api_telemetry(request: Request, db: Session = Depends(get_db)):
-    headers = request.headers
-    device_id = headers.get("x-device-id")
-    timestamp = headers.get("x-timestamp")
-    signature = headers.get("x-signature")
+@app.get("/api/history")
+def api_history(device_id: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
+    rows = get_history(db, device_id=device_id, limit=limit)
+    return [serialize_telemetry(r) for r in rows]
 
-    if not device_id or not timestamp or not signature:
-        raise HTTPException(status_code=400, detail="Headers faltantes")
 
-    if device_id != DEVICE_ID:
-        raise HTTPException(status_code=403, detail="Dispositivo no autorizado")
-
+@app.post("/telemetry")
+async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
     try:
-        ts_int = int(timestamp)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Timestamp inválido")
-
-    now = int(time.time())
-    if abs(now - ts_int) > 300:
-        raise HTTPException(status_code=403, detail="Timestamp fuera de ventana")
-
-    body = await request.body()
-    expected = hmac.new(
-        DEVICE_SECRET.encode(),
-        f"{device_id}.{timestamp}.".encode() + body,
-        hashlib.sha256,
-    ).hexdigest()
-
-    if not hmac.compare_digest(expected, signature):
-        raise HTTPException(status_code=403, detail="Firma inválida")
-
-    try:
-        data = json.loads(body.decode("utf-8"))
+        data = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="JSON inválido")
 
-    temperature = float(data["temperature"])
-    humidity = float(data["humidity"])
-    payload_device = str(data.get("device_id", device_id))
-    payload_ts = int(data.get("ts", ts_int))
+    device_id = str(data.get("device_id", "unknown"))
+    temperature = data.get("temperature", None)
+    humidity = data.get("humidity", None)
+
+    if temperature is None or humidity is None:
+        raise HTTPException(status_code=400, detail="temperature y humidity son obligatorios")
+
+    battery = data.get("battery")
+    status = data.get("status")
+    raw_json = json.dumps(data, ensure_ascii=False)
 
     row = Telemetry(
-        device_id=payload_device,
-        temperature=temperature,
-        humidity=humidity,
-        ts=payload_ts,
+        device_id=device_id,
+        temperature=float(temperature),
+        humidity=float(humidity),
+        battery=int(battery) if battery is not None else None,
+        status=str(status) if status is not None else None,
+        raw_json=raw_json,
     )
+
     db.add(row)
     db.commit()
+    db.refresh(row)
+
+    print("\n==================================================")
+    print("PAQUETE RECIBIDO")
+    print("==================================================")
+    print(raw_json)
+    print("==================================================")
 
     return JSONResponse(
         {
             "ok": True,
-            "message": "Telemetry stored",
+            "message": "Telemetry received",
+            "id": row.id,
+            "created_at": row.created_at.isoformat(),
         }
     )
