@@ -11,7 +11,7 @@ from sqlalchemy import (
     DateTime,
     Text,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # =========================
 # CONFIG
@@ -67,6 +67,9 @@ class Product(Base):
     api_key = Column(String(200), unique=True, index=True, nullable=False)
     device_secret = Column(String(200), unique=True, index=True, nullable=True)
 
+    temp_min = Column(Float, nullable=False, default=2.0)
+    temp_max = Column(Float, nullable=False, default=8.0)
+
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -91,13 +94,25 @@ class Telemetry(Base):
     raw_json = Column(Text, nullable=True)
 
 
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String(120), index=True, nullable=False)
+    telemetry_id = Column(Integer, index=True, nullable=True)
+    level = Column(String(30), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 Base.metadata.create_all(bind=engine)
 
 
 def ensure_device_secret_column():
-    """
-    Agrega la columna device_secret a SQLite si la tabla products ya existía antes.
-    """
     if not DATABASE_URL.startswith("sqlite"):
         return
 
@@ -109,10 +124,25 @@ def ensure_device_secret_column():
             conn.exec_driver_sql("ALTER TABLE products ADD COLUMN device_secret TEXT")
 
 
+def ensure_temperature_columns():
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(products)").fetchall()
+        cols = {row[1] for row in rows}
+
+        if "temp_min" not in cols:
+            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_min FLOAT DEFAULT 2.0")
+
+        if "temp_max" not in cols:
+            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_max FLOAT DEFAULT 8.0")
+
+        conn.exec_driver_sql("UPDATE products SET temp_min = 2.0 WHERE temp_min IS NULL")
+        conn.exec_driver_sql("UPDATE products SET temp_max = 8.0 WHERE temp_max IS NULL")
+
+
 def backfill_device_secrets():
-    """
-    Si ya existían productos sin device_secret, se les asigna uno nuevo.
-    """
     db = SessionLocal()
     try:
         changed = False
@@ -121,12 +151,55 @@ def backfill_device_secrets():
             if not p.device_secret:
                 p.device_secret = secrets.token_urlsafe(48)
                 changed = True
-
         if changed:
             db.commit()
     finally:
         db.close()
 
 
+def backfill_temperature_defaults():
+    db = SessionLocal()
+    try:
+        changed = False
+        products = db.query(Product).all()
+        for p in products:
+            if p.temp_min is None:
+                p.temp_min = 2.0
+                changed = True
+            if p.temp_max is None:
+                p.temp_max = 8.0
+                changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+def backfill_missing_ranges():
+    db = SessionLocal()
+
+    try:
+        changed = False
+
+        products = db.query(Product).all()
+
+        for p in products:
+
+            if p.temp_min is None:
+                p.temp_min = 2.0
+                changed = True
+
+            if p.temp_max is None:
+                p.temp_max = 8.0
+                changed = True
+
+        if changed:
+            db.commit()
+
+    finally:
+        db.close()
+
 ensure_device_secret_column()
+ensure_temperature_columns()
 backfill_device_secrets()
+backfill_temperature_defaults()
+backfill_missing_ranges()

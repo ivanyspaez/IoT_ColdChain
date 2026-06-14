@@ -1,43 +1,52 @@
-import os
 import json
-import secrets
+import time
+import csv
+import io
 import hmac
 import hashlib
-import time
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 
+from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Request, HTTPException, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-
-from passlib.context import CryptContext
-from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
-from app.models import User, Product, Telemetry, get_db
-
-# =========================
-# CONFIG
-# =========================
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 7
-ACCESS_TOKEN_COOKIE = "access_token"
-TELEMETRY_WINDOW_SECONDS = 300
-
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256"],
-    deprecated="auto",
+from app.models import get_db, User
+from app.services import (
+    get_user_by_username,
+    create_user,
+    get_user_products,
+    get_product_by_serial,
+    get_product_by_device,
+    get_product_by_api_key,
+    create_product,
+    get_latest,
+    get_history,
+    get_alerts,
+    register_telemetry_with_alert,
+    get_product_by_id,
+    update_product_temperature_range,
+    delete_product,
+    transfer_product,
+)
+from app.utils import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    current_username,
+    hmac_sha256_hex,
+    serialize_product,
+    serialize_telemetry,
+    serialize_alert,
 )
 
 templates = Jinja2Templates(directory="templates")
 router = APIRouter()
 
+ACCESS_TOKEN_COOKIE = "access_token"
+TELEMETRY_WINDOW_SECONDS = 300
 
-# =========================
-# HELPERS
-# =========================
+
 def render_index(request: Request, context: dict, status_code: int = 200):
     ctx = {"request": request, **context}
     return templates.TemplateResponse(
@@ -48,95 +57,63 @@ def render_index(request: Request, context: dict, status_code: int = 200):
     )
 
 
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
-
-
-def create_access_token(username: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
-    payload = {
-        "sub": username,
-        "exp": expire,
-        "iat": datetime.now(timezone.utc),
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
-
-
-def current_username(request: Request) -> Optional[str]:
-    token = request.cookies.get(ACCESS_TOKEN_COOKIE)
-    if not token:
-        return None
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        return payload.get("sub")
-    except JWTError:
-        return None
-
-
-def require_user(request: Request) -> str:
-    user = current_username(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="No autenticado")
-    return user
-
-
-def serialize_product(row: Product) -> dict:
-    return {
-        "id": row.id,
-        "owner_id": row.owner_id,
-        "product_name": row.product_name,
-        "product_serial": row.product_serial,
-        "device_id": row.device_id,
-        "api_key": row.api_key,
-        "device_secret": row.device_secret,
-        "created_at": row.created_at.isoformat(),
-    }
-
-
-def serialize_telemetry(row: Telemetry) -> dict:
-    return {
-        "id": row.id,
-        "device_id": row.device_id,
-        "temperature": row.temperature,
-        "humidity": row.humidity,
-        "battery": row.battery,
-        "status": row.status,
-        "created_at": row.created_at.isoformat(),
-    }
-
-
-def get_latest(db: Session, device_id: Optional[str] = None):
-    q = db.query(Telemetry)
-    if device_id:
-        q = q.filter(Telemetry.device_id == device_id)
-    return q.order_by(Telemetry.id.desc()).first()
-
-
-def get_history(db: Session, device_id: Optional[str] = None, limit: int = 100):
-    q = db.query(Telemetry)
-    if device_id:
-        q = q.filter(Telemetry.device_id == device_id)
-    rows = q.order_by(Telemetry.id.desc()).limit(limit).all()
-    return list(reversed(rows))
-
-
-# =========================
-# ROUTES
-# =========================
 @router.get("/health")
 def health():
     return {"ok": True}
 
+@router.get("/export/csv")
+def export_csv(
+    device_id: str,
+    db: Session = Depends(get_db),
+):
+    history = get_history(
+        db,
+        device_id=device_id,
+        limit=10000,
+    )
+
+    output = io.StringIO()
+
+    writer = csv.writer(output)
+
+    writer.writerow(
+        [
+            "fecha",
+            "device_id",
+            "temperature",
+            "humidity",
+            "battery",
+            "status",
+        ]
+    )
+
+    for row in history:
+        writer.writerow(
+            [
+                row.created_at.isoformat(),
+                row.device_id,
+                row.temperature,
+                row.humidity,
+                row.battery,
+                row.status,
+            ]
+        )
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition":
+            f"attachment; filename={device_id}.csv"
+        },
+    )
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
-    product_id: Optional[int] = None,
+    product_id: int | None = None,
     db: Session = Depends(get_db),
 ):
     username = current_username(request)
@@ -150,12 +127,13 @@ def dashboard(
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": None,
                 "success": None,
             },
         )
 
-    user = db.query(User).filter(User.username == username).first()
+    user = get_user_by_username(db, username)
     if not user:
         return render_index(
             request,
@@ -165,18 +143,14 @@ def dashboard(
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Sesión inválida. Vuelve a iniciar sesión.",
                 "success": None,
             },
             status_code=401,
         )
 
-    products = (
-        db.query(Product)
-        .filter(Product.owner_id == user.id)
-        .order_by(Product.id.desc())
-        .all()
-    )
+    products = get_user_products(db, user.id)
 
     selected_product = None
     if product_id is not None:
@@ -186,12 +160,18 @@ def dashboard(
 
     latest = None
     history = []
+    alerts = []
+
     if selected_product is not None:
         latest_row = get_latest(db, selected_product.device_id)
         if latest_row:
             latest = serialize_telemetry(latest_row)
+
         history_rows = get_history(db, selected_product.device_id, limit=100)
         history = [serialize_telemetry(r) for r in history_rows]
+
+        alerts_rows = get_alerts(db, selected_product.device_id, limit=20)
+        alerts = [serialize_alert(a) for a in alerts_rows]
 
     return render_index(
         request,
@@ -201,6 +181,7 @@ def dashboard(
             "selected_product": serialize_product(selected_product) if selected_product else None,
             "latest": latest,
             "history": history,
+            "alerts": alerts,
             "error": None,
             "success": None,
         },
@@ -225,13 +206,14 @@ def register(
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Usuario mínimo 3 caracteres y contraseña mínimo 6.",
                 "success": None,
             },
             status_code=400,
         )
 
-    existing = db.query(User).filter(User.username == username).first()
+    existing = get_user_by_username(db, username)
     if existing:
         return render_index(
             request,
@@ -241,19 +223,14 @@ def register(
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Ese usuario ya existe.",
                 "success": None,
             },
             status_code=400,
         )
 
-    user = User(
-        username=username,
-        password_hash=hash_password(password),
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    user = create_user(db, username, hash_password(password))
 
     token = create_access_token(username)
     response = RedirectResponse("/", status_code=303)
@@ -263,7 +240,7 @@ def register(
         httponly=True,
         samesite="lax",
         secure=False,
-        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        max_age=7 * 24 * 60 * 60,
     )
     return response
 
@@ -276,7 +253,7 @@ def login(
     db: Session = Depends(get_db),
 ):
     username = username.strip().lower()
-    user = db.query(User).filter(User.username == username).first()
+    user = get_user_by_username(db, username)
 
     if not user or not verify_password(password, user.password_hash):
         return render_index(
@@ -287,6 +264,7 @@ def login(
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Credenciales inválidas.",
                 "success": None,
             },
@@ -301,7 +279,7 @@ def login(
         httponly=True,
         samesite="lax",
         secure=False,
-        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        max_age=7 * 24 * 60 * 60,
     )
     return response
 
@@ -314,16 +292,20 @@ def logout():
 
 
 @router.post("/products/new")
-def create_product(
+def create_product_route(
     request: Request,
     product_name: str = Form(...),
     product_serial: str = Form(...),
     device_id: str = Form(...),
+    temp_min: float = Form(2.0),
+    temp_max: float = Form(8.0),
     db: Session = Depends(get_db),
 ):
-    username = require_user(request)
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
-    user = db.query(User).filter(User.username == username).first()
+    user = get_user_by_username(db, username)
     if not user:
         return RedirectResponse("/", status_code=303)
 
@@ -336,77 +318,159 @@ def create_product(
             request,
             {
                 "user": username,
-                "products": [
-                    serialize_product(p)
-                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
-                ],
+                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Todos los campos del producto son obligatorios.",
                 "success": None,
             },
             status_code=400,
         )
 
-    duplicate_serial = db.query(Product).filter(Product.product_serial == product_serial).first()
-    if duplicate_serial:
+    if temp_min >= temp_max:
         return render_index(
             request,
             {
                 "user": username,
-                "products": [
-                    serialize_product(p)
-                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
-                ],
+                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
+                "error": "El mínimo de temperatura debe ser menor que el máximo.",
+                "success": None,
+            },
+            status_code=400,
+        )
+
+    if get_product_by_serial(db, product_serial):
+        return render_index(
+            request,
+            {
+                "user": username,
+                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
+                "selected_product": None,
+                "latest": None,
+                "history": [],
+                "alerts": [],
                 "error": "Ese serial ya está registrado.",
                 "success": None,
             },
             status_code=400,
         )
 
-    duplicate_device = db.query(Product).filter(Product.device_id == device_id).first()
-    if duplicate_device:
+    if get_product_by_device(db, device_id):
         return render_index(
             request,
             {
                 "user": username,
-                "products": [
-                    serialize_product(p)
-                    for p in db.query(Product).filter(Product.owner_id == user.id).all()
-                ],
+                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
                 "selected_product": None,
                 "latest": None,
                 "history": [],
+                "alerts": [],
                 "error": "Ese device_id ya está asociado a otro producto.",
                 "success": None,
             },
             status_code=400,
         )
 
-    api_key = secrets.token_urlsafe(32)
-    device_secret = secrets.token_urlsafe(48)
-
-    product = Product(
+    product = create_product(
+        db=db,
         owner_id=user.id,
         product_name=product_name,
         product_serial=product_serial,
         device_id=device_id,
-        api_key=api_key,
-        device_secret=device_secret,
+        temp_min=temp_min,
+        temp_max=temp_max,
     )
-    db.add(product)
-    db.commit()
-    db.refresh(product)
 
     return RedirectResponse(f"/?product_id={product.id}", status_code=303)
 
+@router.post("/products/update-range")
+def update_range(
+    request: Request,
+    product_id: int = Form(...),
+    temp_min: float = Form(...),
+    temp_max: float = Form(...),
+    db: Session = Depends(get_db),
+):
+    username = current_username(request)
 
+    if not username:
+        raise HTTPException(401)
+
+    product = get_product_by_id(db, product_id)
+
+    if not product:
+        raise HTTPException(404)
+
+    if temp_min >= temp_max:
+        raise HTTPException(
+            400,
+            "El mínimo debe ser menor que el máximo"
+        )
+
+    update_product_temperature_range(
+        db,
+        product_id,
+        temp_min,
+        temp_max,
+    )
+
+    return RedirectResponse(
+        f"/?product_id={product_id}",
+        status_code=303,
+    )
+@router.post("/products/delete")
+def delete_product_route(
+    request: Request,
+    product_id: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    username = current_username(request)
+
+    if not username:
+        raise HTTPException(401)
+
+    delete_product(db, product_id)
+
+    return RedirectResponse(
+        "/",
+        status_code=303,
+    )
+@router.post("/products/transfer")
+def transfer_product_route(
+    request: Request,
+    product_id: int = Form(...),
+    username_target: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    username = current_username(request)
+
+    if not username:
+        raise HTTPException(401)
+
+    product = transfer_product(
+        db,
+        product_id,
+        username_target.strip().lower(),
+    )
+
+    if not product:
+        raise HTTPException(
+            404,
+            "Usuario destino no encontrado"
+        )
+
+    return RedirectResponse(
+        "/",
+        status_code=303,
+    )
 @router.get("/api/latest")
-def api_latest(device_id: Optional[str] = None, db: Session = Depends(get_db)):
+def api_latest(device_id: str | None = None, db: Session = Depends(get_db)):
     row = get_latest(db, device_id=device_id)
     if not row:
         return {
@@ -421,9 +485,15 @@ def api_latest(device_id: Optional[str] = None, db: Session = Depends(get_db)):
 
 
 @router.get("/api/history")
-def api_history(device_id: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
+def api_history(device_id: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
     rows = get_history(db, device_id=device_id, limit=limit)
     return [serialize_telemetry(r) for r in rows]
+
+
+@router.get("/api/alerts")
+def api_alerts(device_id: str | None = None, limit: int = 20, db: Session = Depends(get_db)):
+    rows = get_alerts(db, device_id=device_id, limit=limit)
+    return [serialize_alert(r) for r in rows]
 
 
 @router.post("/telemetry")
@@ -435,7 +505,7 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
     if not api_key or not timestamp or not signature:
         raise HTTPException(status_code=401, detail="Faltan headers de autenticación")
 
-    product = db.query(Product).filter(Product.api_key == api_key).first()
+    product = get_product_by_api_key(db, api_key)
     if not product:
         raise HTTPException(status_code=403, detail="API key inválida")
 
@@ -453,11 +523,10 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
 
     body = await request.body()
 
-    expected = hmac.new(
-        product.device_secret.encode(),
-        f"{product.device_id}.{timestamp}.".encode() + body,
-        hashlib.sha256,
-    ).hexdigest()
+    expected = hmac_sha256_hex(
+        f"{product.device_id}.{timestamp}.".encode("utf-8") + body,
+        product.device_secret,
+    )
 
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=403, detail="Firma inválida")
@@ -478,27 +547,17 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="temperature y humidity son obligatorios")
 
     battery = data.get("battery")
-    status = data.get("status")
     raw_json = json.dumps(data, ensure_ascii=False)
 
-    row = Telemetry(
+    row = register_telemetry_with_alert(
+        db=db,
+        product=product,
         device_id=device_id,
         temperature=float(temperature),
         humidity=float(humidity),
-        battery=int(battery) if battery is not None else None,
-        status=str(status) if status is not None else None,
+        battery=battery,
         raw_json=raw_json,
     )
-
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-
-    print("\n==================================================")
-    print("PAQUETE RECIBIDO")
-    print("==================================================")
-    print(raw_json)
-    print("==================================================")
 
     return JSONResponse(
         {
@@ -506,5 +565,6 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
             "message": "Telemetry received",
             "id": row.id,
             "created_at": row.created_at.isoformat(),
+            "status": row.status,
         }
     )

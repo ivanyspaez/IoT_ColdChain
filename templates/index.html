@@ -77,6 +77,16 @@
             <input type="text" name="device_id" placeholder="esp32-coldchain-001" required>
           </div>
 
+          <div>
+            <label>Temp mínima (°C)</label>
+            <input type="number" step="0.1" name="temp_min" value="2.0" required>
+          </div>
+
+          <div>
+            <label>Temp máxima (°C)</label>
+            <input type="number" step="0.1" name="temp_max" value="8.0" required>
+          </div>
+
           <div class="align-end">
             <button type="submit">Guardar producto</button>
           </div>
@@ -94,6 +104,7 @@
                 <strong>{{ p.product_name }}</strong>
                 <span>Serial: {{ p.product_serial }}</span>
                 <span>Device: {{ p.device_id }}</span>
+                <span>Rango: {{ p.temp_min }} °C - {{ p.temp_max }} °C</span>
               </a>
             {% endfor %}
           </div>
@@ -116,6 +127,47 @@
           <span>Device ID</span>
           <strong>{{ selected_product.device_id }}</strong>
         </article>
+
+        <article class="card">
+          <span>Rango permitido</span>
+
+          <strong>
+            {{ selected_product.temp_min or 2.0 }} °C -
+            {{ selected_product.temp_max or 8.0 }} °C
+          </strong>
+
+          <form
+            method="post"
+            action="/products/update-range"
+            style="margin-top:10px;"
+          >
+            <input
+              type="hidden"
+              name="product_id"
+              value="{{ selected_product.id }}"
+            >
+
+            <input
+              type="number"
+              step="0.1"
+              name="temp_min"
+              value="{{ selected_product.temp_min or 2.0 }}"
+            >
+
+            <input
+              type="number"
+              step="0.1"
+              name="temp_max"
+              value="{{ selected_product.temp_max or 8.0 }}"
+            >
+
+            <button type="submit">
+              Actualizar
+            </button>
+          </form>
+        </article>
+
+
         <article class="card">
           <span>API Key</span>
           <strong style="font-size: 12px; word-break: break-all;">
@@ -129,9 +181,62 @@
           </strong>
         </article>
         <article class="card">
+          <span>Estado actual</span>
+          <strong id="statusValue" class="status-ok">OK</strong>
+        </article>
+        <article class="card">
           <span>Última lectura</span>
           <strong id="lastUpdate">--</strong>
         </article>
+      </section>
+
+      <section class="panel">
+        <h2>Transferir producto</h2>
+
+        <form
+          method="post"
+          action="/products/transfer"
+          class="form"
+        >
+          <input
+            type="hidden"
+            name="product_id"
+            value="{{ selected_product.id }}"
+          >
+
+          <input
+            type="text"
+            name="username_target"
+            placeholder="usuario destino"
+            required
+          >
+
+          <button type="submit">
+            Transferir
+          </button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Eliminar producto</h2>
+
+        <form
+          method="post"
+          action="/products/delete"
+        >
+          <input
+            type="hidden"
+            name="product_id"
+            value="{{ selected_product.id }}"
+          >
+
+          <button
+            type="submit"
+            onclick="return confirm('¿Eliminar producto?')"
+          >
+            Eliminar producto
+          </button>
+        </form>
       </section>
 
       <section class="grid">
@@ -147,6 +252,29 @@
           <canvas id="humChart"></canvas>
         </div>
       </section>
+
+      <section class="panel">
+        <h2>Alertas recientes</h2>
+        <div class="alert-list" id="alertsBody">
+          {% if alerts and alerts|length > 0 %}
+            {% for a in alerts %}
+              <div class="alert-card {{ a.level }}">
+                <strong>{{ a.level }}</strong>
+                <div>{{ a.message }}</div>
+                <small>{{ a.created_at }}</small>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p>No hay alertas recientes.</p>
+          {% endif %}
+        </div>
+      </section>
+
+      <a
+        href="/export/csv?device_id={{ selected_product.device_id }}"
+      >
+        Descargar CSV
+      </a>
 
       <section class="panel">
         <h2>Últimas lecturas</h2>
@@ -177,14 +305,37 @@
           return new Date(isoString).toLocaleTimeString();
         }
 
+        function setStatusClass(status) {
+          const statusEl = document.getElementById("statusValue");
+          document.body.classList.remove("state-ok", "state-warning", "state-critical");
+
+          if (status === "HIGH_TEMP") {
+            statusEl.textContent = "HIGH_TEMP";
+            statusEl.className = "status-critical";
+            document.body.classList.add("state-critical");
+          } else if (status === "LOW_TEMP") {
+            statusEl.textContent = "LOW_TEMP";
+            statusEl.className = "status-warning";
+            document.body.classList.add("state-warning");
+          } else {
+            statusEl.textContent = status || "OK";
+            statusEl.className = "status-ok";
+            document.body.classList.add("state-ok");
+          }
+        }
+
         async function refreshDashboard() {
           const latestRes = await fetch(`/api/latest?device_id=${encodeURIComponent(deviceId)}`);
           const latest = await latestRes.json();
 
           if (latest && latest.temperature !== null) {
-            document.getElementById("temperatureValue").textContent = `${Number(latest.temperature).toFixed(1)} °C`;
-            document.getElementById("humidityValue").textContent = `${Number(latest.humidity).toFixed(1)} %`;
-            document.getElementById("lastUpdate").textContent = formatTime(latest.created_at);
+            document.getElementById("temperatureValue").textContent =
+              `${Number(latest.temperature).toFixed(1)} °C`;
+            document.getElementById("humidityValue").textContent =
+              `${Number(latest.humidity).toFixed(1)} %`;
+            document.getElementById("lastUpdate").textContent =
+              formatTime(latest.created_at);
+            setStatusClass(latest.status);
           }
 
           const historyRes = await fetch(`/api/history?device_id=${encodeURIComponent(deviceId)}&limit=100`);
@@ -241,6 +392,19 @@
               <td>${item.status ?? "--"}</td>
             </tr>
           `).join("");
+
+          const alertsRes = await fetch(`/api/alerts?device_id=${encodeURIComponent(deviceId)}&limit=20`);
+          const alerts = await alertsRes.json();
+
+          const alertsHtml = alerts.length > 0 ? alerts.map(a => `
+            <div class="alert-card ${a.level}">
+              <strong>${a.level}</strong>
+              <div>${a.message}</div>
+              <small>${formatTime(a.created_at)}</small>
+            </div>
+          `).join("") : "<p>No hay alertas recientes.</p>";
+
+          document.getElementById("alertsBody").innerHTML = alertsHtml;
         }
 
         refreshDashboard();

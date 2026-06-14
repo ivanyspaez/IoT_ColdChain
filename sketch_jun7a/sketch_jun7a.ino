@@ -39,11 +39,11 @@ const char* DEVICE_ID =
 
 // Copia exactamente esto desde el dashboard
 const char* API_KEY =
-"WV5SQA9AA2K7RwHVZXhwqWPSpEOJqgLZNTv5zczjaLg";
+"YIR-Jq4i6fBsqSYE6_6vFfAQ2TYmQV0Xvs0IxdG_2xY";
 
 // Copia exactamente esto desde el dashboard
 const char* DEVICE_SECRET =
-"z524zp-b_LfYnOUWYL-2vUG0KIQ7AZCOk24M3E6N1E5RHjs1kDgDit0swcM86A2F";
+"csVJp4I40rsrC3Jt3lYJ-S9T9RrJrnxvuZwZ4cOjdhpj5q87tZSaSl3vHyGpJmKp";
 
 // ======================
 // VARIABLES
