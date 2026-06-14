@@ -26,24 +26,24 @@ DFRobot_SHT20 sht20;
 // ======================
 
 const char* WIFI_SSID =
-"Familia sepulveda_2.4G";
+"FLOZANOG";
 
 const char* WIFI_PASSWORD =
-"9611170412";
+"Kj.1110**";
 
 const char* SERVER_URL =
-"http://192.168.2.12:8000/telemetry";
+"http://192.168.80.19:8000/telemetry";
 
 const char* DEVICE_ID =
 "esp32-coldchain-001";
 
 // Copia exactamente esto desde el dashboard
 const char* API_KEY =
-"XOAbCIBvtpfw1xtjGs7fpREpOrNYj7c0bRSMWZG-10k";
+"WV5SQA9AA2K7RwHVZXhwqWPSpEOJqgLZNTv5zczjaLg";
 
 // Copia exactamente esto desde el dashboard
 const char* DEVICE_SECRET =
-"OcDSt8dRp8bWeQcHbOfpoBePqqVfHKa0XFhSPj0Ym7Ed_sZkXe2Qncwp3Kjmv3zF";
+"z524zp-b_LfYnOUWYL-2vUG0KIQ7AZCOk24M3E6N1E5RHjs1kDgDit0swcM86A2F";
 
 // ======================
 // VARIABLES
