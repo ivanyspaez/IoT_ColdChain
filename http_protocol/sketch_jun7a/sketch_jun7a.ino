@@ -176,8 +176,7 @@ void connectWiFi()
 
     Serial.print("Conectando");
 
-    while (WiFi.status() != WL_CONNECTED)
-    {
+    while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
@@ -187,19 +186,8 @@ void connectWiFi()
 
     wifiStatus = "OK";
 
-    Serial.println();
-    Serial.println("===== DATOS DE RED =====");
-
     Serial.print("IP ESP32: ");
     Serial.println(WiFi.localIP());
-
-    Serial.print("Gateway: ");
-    Serial.println(WiFi.gatewayIP());
-
-    Serial.print("DNS: ");
-    Serial.println(WiFi.dnsIP());
-
-    Serial.println("========================");
 
     updateDisplay();
 }
@@ -332,6 +320,7 @@ void setup()
 
     updateDisplay();
 }
+
 
 // ======================
 // LOOP
