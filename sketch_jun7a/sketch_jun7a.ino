@@ -1,13 +1,11 @@
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <PubSubClient.h>
 
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
 #include <DFRobot_SHT20.h>
-#include <time.h>
-#include "mbedtls/md.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -25,25 +23,26 @@ DFRobot_SHT20 sht20;
 // CONFIG
 // ======================
 
-const char* WIFI_SSID =
-"FLOZANOG";
+const char* WIFI_SSID = "FLOZANOG";
+const char* WIFI_PASSWORD = "Kj.1110**";
 
-const char* WIFI_PASSWORD =
-"Kj.1110**";
+// IP de tu PC / host Docker, no la del contenedor
+const char* MQTT_SERVER = "192.168.80.19";
+const uint16_t MQTT_PORT = 1883;
 
-const char* SERVER_URL =
-"http://192.168.80.19:8000/telemetry";
+const char* DEVICE_ID = "esp32-coldchain-001";
+const char* TOPIC_TELEMETRY = "coldchain/esp32-coldchain-001/telemetry";
 
-const char* DEVICE_ID =
-"esp32-coldchain-001";
+// Si después activas autenticación en Mosquitto, descomenta estas dos líneas:
+// const char* MQTT_USER = "coldchain";
+// const char* MQTT_PASSWORD = "coldchain123";
 
-// Copia exactamente esto desde el dashboard
-const char* API_KEY =
-"YIR-Jq4i6fBsqSYE6_6vFfAQ2TYmQV0Xvs0IxdG_2xY";
+// ======================
+// CLIENTES
+// ======================
 
-// Copia exactamente esto desde el dashboard
-const char* DEVICE_SECRET =
-"csVJp4I40rsrC3Jt3lYJ-S9T9RrJrnxvuZwZ4cOjdhpj5q87tZSaSl3vHyGpJmKp";
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 // ======================
 // VARIABLES
@@ -53,77 +52,11 @@ float temperature = 0;
 float humidity = 0;
 
 String wifiStatus = "DESC";
-String httpStatus = "---";
+String mqttStatus = "OFF";
+String httpStatus = "OFF";
 
 unsigned long lastSend = 0;
 const unsigned long interval = 10000;
-
-// ======================
-// HMAC
-// ======================
-
-String hmacSha256Hex(const String& message, const String& key) {
-    byte hmacResult[32];
-
-    const mbedtls_md_info_t* mdInfo =
-        mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
-
-    if (mbedtls_md_setup(&ctx, mdInfo, 1) != 0) {
-        mbedtls_md_free(&ctx);
-        return "";
-    }
-
-    mbedtls_md_hmac_starts(
-        &ctx,
-        (const unsigned char*)key.c_str(),
-        key.length()
-    );
-
-    mbedtls_md_hmac_update(
-        &ctx,
-        (const unsigned char*)message.c_str(),
-        message.length()
-    );
-
-    mbedtls_md_hmac_finish(&ctx, hmacResult);
-    mbedtls_md_free(&ctx);
-
-    char out[65];
-    for (int i = 0; i < 32; i++) {
-        sprintf(&out[i * 2], "%02x", hmacResult[i]);
-    }
-    out[64] = '\0';
-
-    return String(out);
-}
-
-// ======================
-// TIME
-// ======================
-
-void syncTime() {
-    configTime(
-        0,
-        0,
-        "pool.ntp.org",
-        "time.nist.gov",
-        "time.google.com"
-    );
-
-    struct tm timeinfo;
-    unsigned long start = millis();
-
-    while (!getLocalTime(&timeinfo) && millis() - start < 15000) {
-        delay(300);
-    }
-}
-
-time_t nowEpoch() {
-    return time(nullptr);
-}
 
 // ======================
 // OLED
@@ -141,24 +74,32 @@ void updateDisplay()
 
     display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
 
-    display.setCursor(0, 16);
-    display.print("Temp: ");
+    // Fila 1
+    display.setCursor(0, 14);
+    display.print("Temp:");
     display.print(temperature, 1);
-    display.println(" C");
+    display.print(" C");
 
-    display.setCursor(0, 28);
-    display.print("Hum : ");
+    // Fila 2: mitad izquierda / derecha
+    display.setCursor(0, 26);
+    display.print("Hum:");
     display.print(humidity, 1);
-    display.println(" %");
+    display.print(" %");
 
-    display.setCursor(0, 40);
+    display.setCursor(70, 26);
     display.print("WiFi:");
-    display.println(wifiStatus);
+    display.print(wifiStatus);
 
-    display.setCursor(70, 40);
+    // Fila 3: mitad izquierda / derecha
+    display.setCursor(0, 38);
+    display.print("MQTT:");
+    display.print(mqttStatus);
+
+    display.setCursor(70, 38);
     display.print("HTTP:");
-    display.println(httpStatus);
+    display.print(httpStatus);
 
+    // Fila 4 completa
     display.setCursor(0, 54);
     display.print("ID:");
     display.print(DEVICE_ID);
@@ -172,9 +113,10 @@ void updateDisplay()
 
 void connectWiFi()
 {
+    WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    Serial.print("Conectando");
+    Serial.print("Conectando WiFi");
 
     while (WiFi.status() != WL_CONNECTED)
     {
@@ -187,9 +129,6 @@ void connectWiFi()
 
     wifiStatus = "OK";
 
-    Serial.println();
-    Serial.println("===== DATOS DE RED =====");
-
     Serial.print("IP ESP32: ");
     Serial.println(WiFi.localIP());
 
@@ -199,37 +138,74 @@ void connectWiFi()
     Serial.print("DNS: ");
     Serial.println(WiFi.dnsIP());
 
-    Serial.println("========================");
+    updateDisplay();
+}
+
+// ======================
+// MQTT
+// ======================
+
+void connectMQTT()
+{
+    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    mqttClient.setBufferSize(256);
+
+    while (!mqttClient.connected())
+    {
+        Serial.println("Conectando MQTT...");
+
+        String clientId = String(DEVICE_ID) + "-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+
+        // Broker actual con allow_anonymous true
+        bool ok = mqttClient.connect(clientId.c_str());
+
+        // Si luego activas autenticación:
+        // bool ok = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD);
+
+        if (ok)
+        {
+            Serial.println("MQTT conectado");
+            mqttStatus = "OK";
+        }
+        else
+        {
+            Serial.print("MQTT error: ");
+            Serial.println(mqttClient.state());
+
+            mqttStatus = "FAIL";
+            updateDisplay();
+            delay(3000);
+        }
+    }
 
     updateDisplay();
 }
 
 // ======================
-// TELEMETRIA
+// TELEMETRIA MQTT
 // ======================
 
 void sendTelemetry()
 {
-    if (WiFi.status() != WL_CONNECTED) {
+    if (WiFi.status() != WL_CONNECTED)
+    {
         wifiStatus = "FAIL";
         updateDisplay();
         return;
     }
 
-    time_t ts = nowEpoch();
-    if (ts < 1700000000) {
-        Serial.println("NTP no sincronizado");
-        httpStatus = "NTP";
-        updateDisplay();
-        return;
+    if (!mqttClient.connected())
+    {
+        connectMQTT();
     }
 
     temperature = sht20.readTemperature();
     humidity = sht20.readHumidity();
 
-    if (isnan(temperature) || isnan(humidity)) {
+    if (isnan(temperature) || isnan(humidity))
+    {
         Serial.println("Error leyendo SHT20");
-        httpStatus = "SHT ERR";
+        mqttStatus = "SHT ERR";
         updateDisplay();
         return;
     }
@@ -243,14 +219,6 @@ void sendTelemetry()
         "\"status\":\"OK\""
         "}";
 
-    String message =
-        String(DEVICE_ID) + "." +
-        String((uint32_t)ts) + "." +
-        json;
-
-    String signature =
-        hmacSha256Hex(message, DEVICE_SECRET);
-
     Serial.println();
     Serial.println("Lecturas SHT20");
     Serial.print("Temperatura: ");
@@ -261,39 +229,27 @@ void sendTelemetry()
     Serial.println(" %");
 
     Serial.println();
-    Serial.println("Enviando:");
+    Serial.println("Publicando MQTT:");
     Serial.println(json);
-    Serial.print("TIMESTAMP: ");
-    Serial.println((uint32_t)ts);
-    Serial.print("SIGNATURE: ");
-    Serial.println(signature);
 
-    HTTPClient http;
-    http.begin(SERVER_URL);
+    bool ok = mqttClient.publish(
+        TOPIC_TELEMETRY,
+        json.c_str()
+    );
 
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-API-KEY", API_KEY);
-    http.addHeader("X-Timestamp", String((uint32_t)ts));
-    http.addHeader("X-Signature", signature);
-
-    int code = http.POST(json);
-
-    Serial.print("HTTP CODE: ");
-    Serial.println(code);
-
-    if (code >= 200 && code < 300) {
-        httpStatus = "OK";
-        String response = http.getString();
-
-        Serial.println();
-        Serial.println("RESPUESTA:");
-        Serial.println(response);
-    } else {
-        httpStatus = "ERR";
-        Serial.println("Error enviando telemetria");
+    if (ok)
+    {
+        mqttStatus = "OK";
+        httpStatus = "OFF";
+        Serial.println("MQTT OK");
+    }
+    else
+    {
+        mqttStatus = "ERR";
+        Serial.print("MQTT FAIL, state=");
+        Serial.println(mqttClient.state());
     }
 
-    http.end();
     updateDisplay();
 }
 
@@ -308,7 +264,8 @@ void setup()
 
     Wire.begin(21, 22);
 
-    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
+    {
         Serial.println("OLED NO DETECTADA");
         while (true);
     }
@@ -328,7 +285,10 @@ void setup()
     Serial.println("SHT20 listo");
 
     connectWiFi();
-    syncTime();
+    connectMQTT();
+
+    mqttStatus = "OK";
+    httpStatus = "OFF";
 
     updateDisplay();
 }
@@ -339,7 +299,21 @@ void setup()
 
 void loop()
 {
-    if (millis() - lastSend >= interval) {
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        wifiStatus = "FAIL";
+        connectWiFi();
+    }
+
+    if (!mqttClient.connected())
+    {
+        connectMQTT();
+    }
+
+    mqttClient.loop();
+
+    if (millis() - lastSend >= interval)
+    {
         lastSend = millis();
         sendTelemetry();
     }

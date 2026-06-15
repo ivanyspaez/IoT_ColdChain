@@ -2104,3 +2104,115 @@ To fix this, use `chmod 0700 /mosquitto/config/passwordfile`.
 1781499322: Client auto-AC1A1859-24D7-108D-BF39-6B6716D1B23F [172.18.0.3:35379] disconnected: connection closed by client.
 1781499323: mosquitto version 2.1.2 terminating
 1781499323: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781530836: mosquitto version 2.1.2 starting
+1781530836: Config loaded from /mosquitto/config/mosquitto.conf.
+1781530836: Bridge support available.
+1781530836: Persistence support available.
+1781530836: TLS support available.
+1781530836: TLS-PSK support available.
+1781530836: Websockets support available.
+1781530836: Opening ipv4 listen socket on port 1883.
+1781530836: mosquitto version 2.1.2 running
+1781530840: New connection from 172.18.0.3:49087 on port 1883.
+1781530840: New client connected from 172.18.0.3:49087 as auto-785B77F2-69D7-6D4F-93FB-B6388C0E50FA (p4, c1, k60).
+1781532414: New connection from 127.0.0.1:57300 on port 1883.
+1781532414: New client connected from 127.0.0.1:57300 as auto-8C686380-5B7A-BC08-ED57-BEC69BCC1B2B (p4, c1, k60, u'coldchain').
+1781532414: Client auto-8C686380-5B7A-BC08-ED57-BEC69BCC1B2B [127.0.0.1:57300] disconnected.
+1781532563: New connection from 127.0.0.1:58178 on port 1883.
+1781532563: New client connected from 127.0.0.1:58178 as auto-803C8B38-BFC4-FA14-04A2-1E7353A46B08 (p4, c1, k60, u'coldchain').
+1781532563: Client auto-803C8B38-BFC4-FA14-04A2-1E7353A46B08 [127.0.0.1:58178] disconnected.
+1781532636: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781533117: Client auto-785B77F2-69D7-6D4F-93FB-B6388C0E50FA [172.18.0.3:49087] disconnected: connection closed by client.
+1781533118: mosquitto version 2.1.2 terminating
+1781533118: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781533253: mosquitto version 2.1.2 starting
+1781533253: Config loaded from /mosquitto/config/mosquitto.conf.
+1781533253: Bridge support available.
+1781533253: Persistence support available.
+1781533253: TLS support available.
+1781533253: TLS-PSK support available.
+1781533253: Websockets support available.
+1781533253: Opening ipv4 listen socket on port 1883.
+1781533253: mosquitto version 2.1.2 running
+1781533257: New connection from 172.18.0.3:53251 on port 1883.
+1781533257: New client connected from 172.18.0.3:53251 as auto-8520C809-4727-7DE3-D1BB-15D2B3543510 (p4, c1, k60).
+1781534210: Client auto-8520C809-4727-7DE3-D1BB-15D2B3543510 [172.18.0.3:53251] disconnected: connection closed by client.
+1781534211: mosquitto version 2.1.2 terminating
+1781534211: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781534234: mosquitto version 2.1.2 starting
+1781534234: Config loaded from /mosquitto/config/mosquitto.conf.
+1781534234: Bridge support available.
+1781534234: Persistence support available.
+1781534234: TLS support available.
+1781534234: TLS-PSK support available.
+1781534234: Websockets support available.
+1781534234: Opening ipv4 listen socket on port 1883.
+1781534234: mosquitto version 2.1.2 running
+1781534238: New connection from 172.18.0.3:52199 on port 1883.
+1781534238: New client connected from 172.18.0.3:52199 as auto-0ED8F647-8990-4A05-1743-61DCFDE63686 (p4, c1, k60).
+1781534797: New connection from 127.0.0.1:55780 on port 1883.
+1781534797: New client connected from 127.0.0.1:55780 as auto-7CD16A75-1E27-9E6C-225C-2C85364669DF (p4, c1, k60, u'coldchain').
+1781534828: New connection from 127.0.0.1:44772 on port 1883.
+1781534828: New client connected from 127.0.0.1:44772 as auto-C39DAC79-6C15-F3D8-BBEB-E2D376D7A9D8 (p4, c1, k60, u'coldchain').
+1781534828: Client auto-C39DAC79-6C15-F3D8-BBEB-E2D376D7A9D8 [127.0.0.1:44772] disconnected.
+1781535106: New connection from 127.0.0.1:36056 on port 1883.
+1781535106: New client connected from 127.0.0.1:36056 as auto-24FF3608-CED0-204A-E39C-8EC7F8978920 (p4, c1, k60).
+1781535106: Client auto-24FF3608-CED0-204A-E39C-8EC7F8978920 [127.0.0.1:36056] disconnected.
+1781535303: New connection from 127.0.0.1:54798 on port 1883.
+1781535303: New client connected from 127.0.0.1:54798 as auto-5F868912-2787-BFF1-3128-9226F9A4EC50 (p4, c1, k60).
+1781535303: Client auto-5F868912-2787-BFF1-3128-9226F9A4EC50 [127.0.0.1:54798] disconnected.
+1781535497: New connection from 172.18.0.3:33491 on port 1883.
+1781535497: New client connected from 172.18.0.3:33491 as auto-2112546F-8F8E-DBD6-1FD2-B9B7E5BB5FF9 (p4, c1, k60).
+1781536035: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781537126: New connection from 172.18.0.1:54230 on port 1883.
+1781537126: New client connected from 172.18.0.1:54230 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781537835: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781538691: Client esp32-coldchain-001-25077000 [172.18.0.1:54230] disconnected: exceeded timeout.
+1781538697: New connection from 172.18.0.1:59682 on port 1883.
+1781538697: New client connected from 172.18.0.1:59682 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781539167: Client esp32-coldchain-001-25077000 [172.18.0.1:59682] disconnected: exceeded timeout.
+1781539636: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781541436: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781543237: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781545024: New connection from 172.18.0.1:56254 on port 1883.
+1781545025: New client connected from 172.18.0.1:56254 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781545037: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781545301: New connection from 127.0.0.1:43530 on port 1883.
+1781545301: New client connected from 127.0.0.1:43530 as auto-FFEA995D-F798-3C06-E577-26147685791C (p4, c1, k60).
+1781546300: mosquitto version 2.1.2 terminating
+1781546300: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781546307: mosquitto version 2.1.2 starting
+1781546307: Config loaded from /mosquitto/config/mosquitto.conf.
+1781546307: Bridge support available.
+1781546307: Persistence support available.
+1781546307: TLS support available.
+1781546307: TLS-PSK support available.
+1781546307: Websockets support available.
+1781546307: Opening ipv4 listen socket on port 1883.
+1781546307: mosquitto version 2.1.2 running
+1781546311: New connection from 172.18.0.3:42917 on port 1883.
+1781546311: New client connected from 172.18.0.3:42917 as auto-86095F72-404F-1409-34EB-F7BF146014F3 (p4, c1, k60, u'coldchain').
+1781546318: New connection from 172.18.0.1:38360 on port 1883.
+1781546318: New client connected from 172.18.0.1:38360 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781546922: Client auto-86095F72-404F-1409-34EB-F7BF146014F3 [172.18.0.3:42917] disconnected: connection closed by client.
+1781546923: mosquitto version 2.1.2 terminating
+1781546923: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781547193: mosquitto version 2.1.2 starting
+1781547193: Config loaded from /mosquitto/config/mosquitto.conf.
+1781547193: Bridge support available.
+1781547193: Persistence support available.
+1781547193: TLS support available.
+1781547193: TLS-PSK support available.
+1781547193: Websockets support available.
+1781547193: Opening ipv4 listen socket on port 1883.
+1781547193: mosquitto version 2.1.2 running
+1781547194: New connection from 172.18.0.1:59872 on port 1883.
+1781547194: New client connected from 172.18.0.1:59872 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781547198: New connection from 172.18.0.3:43781 on port 1883.
+1781547198: New client connected from 172.18.0.3:43781 as auto-7A770940-55BA-F53B-1DB0-158AC4AB332B (p4, c1, k60, u'coldchain').
+1781547639: Client auto-7A770940-55BA-F53B-1DB0-158AC4AB332B [172.18.0.3:43781] disconnected: connection closed by client.
+1781547645: New connection from 172.18.0.3:45855 on port 1883.
+1781547645: New client connected from 172.18.0.3:45855 as auto-092CD8AD-EC3B-BAF1-6DED-490EB704A5FA (p4, c1, k60, u'coldchain').
+1781547653: Client auto-092CD8AD-EC3B-BAF1-6DED-490EB704A5FA [172.18.0.3:45855] disconnected: connection closed by client.
+1781547655: mosquitto version 2.1.2 terminating
+1781547655: Saving in-memory database to /mosquitto/data//mosquitto.db.

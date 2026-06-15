@@ -19,12 +19,21 @@ PASSWORD = os.getenv("MQTT_PASSWORD")
 def on_connect(client, userdata, flags, rc, properties=None):
     print(f"MQTT conectado RC={rc}")
 
-    client.subscribe("coldchain/+/telemetry")
+    result, mid = client.subscribe(
+        "coldchain/+/telemetry"
+    )
 
-    print("Suscrito a coldchain/+/telemetry")
-
+    print(
+        f"Suscripcion resultado={result}"
+    )
 
 def on_message(client, userdata, msg):
+
+    print("================================")
+    print("MENSAJE MQTT RECIBIDO")
+    print("TOPIC:", msg.topic)
+    print("PAYLOAD:", msg.payload.decode())
+    print("================================")
 
     try:
 
@@ -47,6 +56,11 @@ def on_message(client, userdata, msg):
             product = get_product_by_device(
                 db,
                 device_id
+            )
+
+            print(
+                "PRODUCTO:",
+                product
             )
 
             if not product:
@@ -77,9 +91,8 @@ def on_message(client, userdata, msg):
     except Exception as e:
 
         print(
-            f"Error MQTT: {e}"
+            f"ERROR MQTT: {repr(e)}"
         )
-
 
 client = mqtt.Client()
 
@@ -88,9 +101,14 @@ if USERNAME and PASSWORD:
         USERNAME,
         PASSWORD
     )
-
+def on_subscribe(client, userdata, mid, granted_qos, properties=None):
+    print(
+        f"SUBSCRITO mid={mid} qos={granted_qos}"
+    )
+    
 client.on_connect = on_connect
 client.on_message = on_message
+client.on_subscribe = on_subscribe
 
 client.connect(
     BROKER,

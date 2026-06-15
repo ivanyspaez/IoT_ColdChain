@@ -1,24 +1,37 @@
 services:
+
   web:
     build: .
     container_name: iot_coldchain_web
+
     ports:
       - "8000:8000"
+
     volumes:
       - ./data:/app/data
+
     environment:
       DATABASE_URL: sqlite:///./data/telemetry.db
       MAX_HISTORY: 200
+
       MQTT_BROKER_HOST: mqtt
       MQTT_BROKER_PORT: 1883
+
+      MQTT_USERNAME: coldchain
+      MQTT_PASSWORD: coldchain123
+
     depends_on:
       - mqtt
+
     restart: unless-stopped
+
     networks:
       - iotnet
 
+
   mqtt:
     image: eclipse-mosquitto:2
+    container_name: iot_coldchain_mqtt
 
     ports:
       - "1883:1883"
@@ -29,8 +42,10 @@ services:
       - ./mosquitto/log:/mosquitto/log
 
     restart: unless-stopped
+
     networks:
       - iotnet
+
 
 networks:
   iotnet:
