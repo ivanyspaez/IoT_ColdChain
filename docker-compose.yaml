@@ -11,8 +11,6 @@ services:
       MAX_HISTORY: 200
       MQTT_BROKER_HOST: mqtt
       MQTT_BROKER_PORT: 1883
-      MQTT_USERNAME: coldchain
-      MQTT_PASSWORD: coldchain123
     depends_on:
       - mqtt
     restart: unless-stopped
@@ -21,7 +19,6 @@ services:
 
   mqtt:
     image: eclipse-mosquitto:2
-    user: "0:0"
 
     ports:
       - "1883:1883"
