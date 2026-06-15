@@ -2216,3 +2216,19 @@ To fix this, use `chmod 0700 /mosquitto/config/passwordfile`.
 1781547653: Client auto-092CD8AD-EC3B-BAF1-6DED-490EB704A5FA [172.18.0.3:45855] disconnected: connection closed by client.
 1781547655: mosquitto version 2.1.2 terminating
 1781547655: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1781547678: mosquitto version 2.1.2 starting
+1781547678: Config loaded from /mosquitto/config/mosquitto.conf.
+1781547678: Bridge support available.
+1781547678: Persistence support available.
+1781547678: TLS support available.
+1781547678: TLS-PSK support available.
+1781547678: Websockets support available.
+1781547678: Opening ipv4 listen socket on port 1883.
+1781547678: mosquitto version 2.1.2 running
+1781547679: New connection from 172.18.0.1:38066 on port 1883.
+1781547679: New client connected from 172.18.0.1:38066 as esp32-coldchain-001-25077000 (p4, c1, k15).
+1781547681: New connection from 172.18.0.3:52923 on port 1883.
+1781547681: New client connected from 172.18.0.3:52923 as auto-36DD68AA-113A-3416-E4EC-08E2BC445CFF (p4, c1, k60, u'coldchain').
+1781548117: Client auto-36DD68AA-113A-3416-E4EC-08E2BC445CFF [172.18.0.3:52923] disconnected: connection closed by client.
+1781548118: mosquitto version 2.1.2 terminating
+1781548118: Saving in-memory database to /mosquitto/data//mosquitto.db.
