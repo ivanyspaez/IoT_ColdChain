@@ -9,3 +9,32 @@ services:
     environment:
       DATABASE_URL: sqlite:///./data/telemetry.db
       MAX_HISTORY: 200
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: 1883
+      MQTT_USERNAME: coldchain
+      MQTT_PASSWORD: coldchain123
+    depends_on:
+      - mqtt
+    restart: unless-stopped
+    networks:
+      - iotnet
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    user: "0:0"
+
+    ports:
+      - "1883:1883"
+
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+    restart: unless-stopped
+    networks:
+      - iotnet
+
+networks:
+  iotnet:
+    driver: bridge

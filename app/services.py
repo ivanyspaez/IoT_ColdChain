@@ -106,7 +106,6 @@ def delete_product(db: Session, product_id: int):
 
     return True
 
-
 def transfer_product(
     db: Session,
     product_id: int,
