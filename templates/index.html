@@ -77,16 +77,6 @@
             <input type="text" name="device_id" placeholder="esp32-coldchain-001" required>
           </div>
 
-          <div>
-            <label>Temp mínima (°C)</label>
-            <input type="number" step="0.1" name="temp_min" value="2.0" required>
-          </div>
-
-          <div>
-            <label>Temp máxima (°C)</label>
-            <input type="number" step="0.1" name="temp_max" value="8.0" required>
-          </div>
-
           <div class="align-end">
             <button type="submit">Guardar producto</button>
           </div>
@@ -104,7 +94,6 @@
                 <strong>{{ p.product_name }}</strong>
                 <span>Serial: {{ p.product_serial }}</span>
                 <span>Device: {{ p.device_id }}</span>
-                <span>Rango: {{ p.temp_min }} °C - {{ p.temp_max }} °C</span>
               </a>
             {% endfor %}
           </div>
@@ -127,47 +116,6 @@
           <span>Device ID</span>
           <strong>{{ selected_product.device_id }}</strong>
         </article>
-
-        <article class="card">
-          <span>Rango permitido</span>
-
-          <strong>
-            {{ selected_product.temp_min or 2.0 }} °C -
-            {{ selected_product.temp_max or 8.0 }} °C
-          </strong>
-
-          <form
-            method="post"
-            action="/products/update-range"
-            style="margin-top:10px;"
-          >
-            <input
-              type="hidden"
-              name="product_id"
-              value="{{ selected_product.id }}"
-            >
-
-            <input
-              type="number"
-              step="0.1"
-              name="temp_min"
-              value="{{ selected_product.temp_min or 2.0 }}"
-            >
-
-            <input
-              type="number"
-              step="0.1"
-              name="temp_max"
-              value="{{ selected_product.temp_max or 8.0 }}"
-            >
-
-            <button type="submit">
-              Actualizar
-            </button>
-          </form>
-        </article>
-
-
         <article class="card">
           <span>API Key</span>
           <strong style="font-size: 12px; word-break: break-all;">
@@ -175,14 +123,11 @@
           </strong>
         </article>
         <article class="card">
-          <span>Device Secret</span>
-          <strong style="font-size: 11px; word-break: break-all;">
-            {{ selected_product.device_secret }}
+          <span>Rango permitido</span>
+          <strong>
+            {{ selected_product.min_temp }} °C -
+            {{ selected_product.max_temp }} °C
           </strong>
-        </article>
-        <article class="card">
-          <span>Estado actual</span>
-          <strong id="statusValue" class="status-ok">OK</strong>
         </article>
         <article class="card">
           <span>Última lectura</span>
@@ -191,220 +136,516 @@
       </section>
 
       <section class="panel">
-        <h2>Transferir producto</h2>
+        <div class="panel-header">
+          <div>
+            <h2>Estado general</h2>
+            <p>Variables medidas y futuras métricas listas para ampliación.</p>
+          </div>
 
-        <form
-          method="post"
-          action="/products/transfer"
-          class="form"
-        >
-          <input
-            type="hidden"
-            name="product_id"
-            value="{{ selected_product.id }}"
-          >
+          <a class="button button-link"
+             href="/export/csv?device_id={{ selected_product.device_id }}">
+            Descargar CSV
+          </a>
+        </div>
 
-          <input
-            type="text"
-            name="username_target"
-            placeholder="usuario destino"
-            required
-          >
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span>Temperatura</span>
+            <strong id="temperatureValue">--</strong>
+          </article>
 
-          <button type="submit">
-            Transferir
-          </button>
-        </form>
-      </section>
+          <article class="metric-card">
+            <span>Humedad relativa</span>
+            <strong id="humidityValue">--</strong>
+          </article>
 
-      <section class="panel">
-        <h2>Eliminar producto</h2>
+          <article class="metric-card">
+            <span>Nivel de luz</span>
+            <strong id="lightValue">--</strong>
+          </article>
 
-        <form
-          method="post"
-          action="/products/delete"
-        >
-          <input
-            type="hidden"
-            name="product_id"
-            value="{{ selected_product.id }}"
-          >
+          <article class="metric-card">
+            <span>Gases / VOC</span>
+            <strong id="gasValue">--</strong>
+          </article>
 
-          <button
-            type="submit"
-            onclick="return confirm('¿Eliminar producto?')"
-          >
-            Eliminar producto
-          </button>
-        </form>
+          <article class="metric-card">
+            <span>Humo</span>
+            <strong id="smokeValue">--</strong>
+          </article>
+
+          <article class="metric-card">
+            <span>Batería</span>
+            <strong id="batteryValue">--</strong>
+          </article>
+        </div>
       </section>
 
       <section class="grid">
         <div class="panel">
-          <h2>Temperatura</h2>
-          <div class="big-value" id="temperatureValue">--</div>
-          <canvas id="tempChart"></canvas>
+          <div class="panel-header">
+            <div>
+              <h2>Temperatura</h2>
+              <p>Serie histórica y comportamiento térmico.</p>
+            </div>
+            <span id="statusValue" class="status-pill">--</span>
+          </div>
+
+          <div class="big-value" id="temperatureValueBig">--</div>
+          <div class="chart-box">
+            <canvas id="tempChart"></canvas>
+          </div>
         </div>
 
         <div class="panel">
-          <h2>Humedad</h2>
-          <div class="big-value" id="humidityValue">--</div>
-          <canvas id="humChart"></canvas>
+          <div class="panel-header">
+            <div>
+              <h2>Humedad</h2>
+              <p>Serie histórica y variabilidad relativa.</p>
+            </div>
+          </div>
+
+          <div class="big-value" id="humidityValueBig">--</div>
+          <div class="chart-box">
+            <canvas id="humChart"></canvas>
+          </div>
         </div>
       </section>
 
       <section class="panel">
-        <h2>Alertas recientes</h2>
-        <div class="alert-list" id="alertsBody">
-          {% if alerts and alerts|length > 0 %}
-            {% for a in alerts %}
-              <div class="alert-card {{ a.level }}">
-                <strong>{{ a.level }}</strong>
-                <div>{{ a.message }}</div>
-                <small>{{ a.created_at }}</small>
-              </div>
-            {% endfor %}
-          {% else %}
-            <p>No hay alertas recientes.</p>
-          {% endif %}
+        <div class="panel-header">
+          <div>
+            <h2>Métricas derivadas</h2>
+            <p>Indicadores útiles para EDA y análisis de estabilidad.</p>
+          </div>
+        </div>
+
+        <div class="metric-grid derived-grid">
+          <article class="metric-card derived">
+            <span>Promedio temperatura</span>
+            <strong id="avgTemp">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Temperatura mínima</span>
+            <strong id="minTemp">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Temperatura máxima</span>
+            <strong id="maxTemp">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Fluctuación térmica</span>
+            <strong id="tempRange">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Desviación estándar</span>
+            <strong id="tempStd">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Tiempo de excursión</span>
+            <strong id="excursionTime">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Excursiones térmicas</span>
+            <strong id="excursionCount">--</strong>
+          </article>
+
+          <article class="metric-card derived">
+            <span>Promedio humedad</span>
+            <strong id="avgHum">--</strong>
+          </article>
         </div>
       </section>
 
-      <a
-        href="/export/csv?device_id={{ selected_product.device_id }}"
-      >
-        Descargar CSV
-      </a>
-
       <section class="panel">
-        <h2>Últimas lecturas</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Hora</th>
-                <th>Device</th>
-                <th>Temp (°C)</th>
-                <th>Humedad (%)</th>
-                <th>Batería</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody id="historyBody"></tbody>
-          </table>
+        <div class="panel-header">
+          <div>
+            <h2>Últimas lecturas</h2>
+            <p>Historial resumido en formato compacto.</p>
+          </div>
+          <a class="button button-link"
+             href="/export/csv?device_id={{ selected_product.device_id }}">
+            Descargar CSV
+          </a>
         </div>
+
+        <details class="collapsible" open>
+          <summary>
+            <span>Últimas lecturas</span>
+            <span class="summary-count" id="historyCount">0</span>
+          </summary>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha y hora</th>
+                  <th>Device</th>
+                  <th>Temp (°C)</th>
+                  <th>Humedad (%)</th>
+                  <th>Batería</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+        </details>
+
+        <details class="collapsible">
+          <summary>
+            <span>Alertas recientes</span>
+            <span class="summary-count" id="alertsCount">0</span>
+          </summary>
+
+          <div id="alertsContainer" class="alert-list"></div>
+        </details>
       </section>
 
       <script>
         const deviceId = "{{ selected_product.device_id }}";
+        const tempMin = Number("{{ selected_product.min_temp }}");
+        const tempMax = Number("{{ selected_product.max_temp }}");
+
         let tempChart = null;
         let humChart = null;
 
-        function formatTime(isoString) {
-          if (!isoString) return "--";
-          return new Date(isoString).toLocaleTimeString();
+        function safeNumber(value, digits = 1) {
+          const n = Number(value);
+          return Number.isFinite(n) ? n.toFixed(digits) : "--";
         }
 
-        function setStatusClass(status) {
-          const statusEl = document.getElementById("statusValue");
+        function formatDateTime(isoString) {
+          if (!isoString) return "--";
+          const date = new Date(isoString);
+          return new Intl.DateTimeFormat("es-CO", {
+            dateStyle: "medium",
+            timeStyle: "medium"
+          }).format(date);
+        }
+
+        function formatChartLabel(isoString) {
+          if (!isoString) return "--";
+          const date = new Date(isoString);
+          return new Intl.DateTimeFormat("es-CO", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit"
+          }).format(date);
+        }
+
+        function setState(status) {
           document.body.classList.remove("state-ok", "state-warning", "state-critical");
 
           if (status === "HIGH_TEMP") {
-            statusEl.textContent = "HIGH_TEMP";
-            statusEl.className = "status-critical";
             document.body.classList.add("state-critical");
+            document.getElementById("statusValue").className = "status-pill critical";
+            document.getElementById("statusValue").textContent = "ALTA TEMP";
           } else if (status === "LOW_TEMP") {
-            statusEl.textContent = "LOW_TEMP";
-            statusEl.className = "status-warning";
             document.body.classList.add("state-warning");
+            document.getElementById("statusValue").className = "status-pill warning";
+            document.getElementById("statusValue").textContent = "BAJA TEMP";
           } else {
-            statusEl.textContent = status || "OK";
-            statusEl.className = "status-ok";
             document.body.classList.add("state-ok");
+            document.getElementById("statusValue").className = "status-pill ok";
+            document.getElementById("statusValue").textContent = status ?? "OK";
           }
         }
 
-        async function refreshDashboard() {
-          const latestRes = await fetch(`/api/latest?device_id=${encodeURIComponent(deviceId)}`);
-          const latest = await latestRes.json();
+        function mean(values) {
+          if (!values.length) return null;
+          return values.reduce((a, b) => a + b, 0) / values.length;
+        }
 
-          if (latest && latest.temperature !== null) {
-            document.getElementById("temperatureValue").textContent =
-              `${Number(latest.temperature).toFixed(1)} °C`;
-            document.getElementById("humidityValue").textContent =
-              `${Number(latest.humidity).toFixed(1)} %`;
-            document.getElementById("lastUpdate").textContent =
-              formatTime(latest.created_at);
-            setStatusClass(latest.status);
+        function stdDev(values) {
+          if (values.length < 2) return 0;
+          const m = mean(values);
+          const variance = mean(values.map(v => (v - m) ** 2));
+          return Math.sqrt(variance);
+        }
+
+        function computeDerivedMetrics(history) {
+          const temps = history
+            .map(item => Number(item.temperature))
+            .filter(v => Number.isFinite(v));
+
+          const hums = history
+            .map(item => Number(item.humidity))
+            .filter(v => Number.isFinite(v));
+
+          if (!temps.length) {
+            return {
+              avgTemp: null,
+              minTemp: null,
+              maxTemp: null,
+              tempRange: null,
+              tempStd: null,
+              avgHum: null,
+              excursionCount: null,
+              excursionTime: null
+            };
           }
 
-          const historyRes = await fetch(`/api/history?device_id=${encodeURIComponent(deviceId)}&limit=100`);
-          const history = await historyRes.json();
+          const minValue = Math.min(...temps);
+          const maxValue = Math.max(...temps);
+          const averageValue = mean(temps);
+          const standardDeviation = stdDev(temps);
+          const averageHumidity = mean(hums);
 
-          const labels = history.map(item => formatTime(item.created_at));
-          const tempData = history.map(item => item.temperature);
-          const humData = history.map(item => item.humidity);
+          let excursionCount = 0;
+          let excursionMs = 0;
+          let inExcursion = false;
 
-          if (tempChart) tempChart.destroy();
-          if (humChart) humChart.destroy();
+          for (let i = 0; i < history.length; i++) {
+            const currentTemp = Number(history[i].temperature);
+            const outOfRange = currentTemp < tempMin || currentTemp > tempMax;
 
-          tempChart = new Chart(document.getElementById("tempChart"), {
-            type: "line",
-            data: {
-              labels,
-              datasets: [{
-                label: "Temperatura °C",
-                data: tempData,
-                borderWidth: 2,
-                tension: 0.25
-              }]
-            },
-            options: {
-              responsive: true,
-              animation: false
+            if (outOfRange && !inExcursion) {
+              excursionCount += 1;
+              inExcursion = true;
             }
-          });
 
-          humChart = new Chart(document.getElementById("humChart"), {
-            type: "line",
-            data: {
-              labels,
-              datasets: [{
-                label: "Humedad %",
-                data: humData,
-                borderWidth: 2,
-                tension: 0.25
-              }]
-            },
-            options: {
-              responsive: true,
-              animation: false
+            if (!outOfRange && inExcursion) {
+              inExcursion = false;
             }
-          });
 
-          document.getElementById("historyBody").innerHTML = history.slice().reverse().map(item => `
-            <tr>
-              <td>${formatTime(item.created_at)}</td>
-              <td>${item.device_id}</td>
-              <td>${Number(item.temperature).toFixed(1)}</td>
-              <td>${Number(item.humidity).toFixed(1)}</td>
-              <td>${item.battery ?? "--"}</td>
-              <td>${item.status ?? "--"}</td>
-            </tr>
+            if (i > 0) {
+              const prev = history[i - 1];
+              const curr = history[i];
+              const prevDate = new Date(prev.created_at);
+              const currDate = new Date(curr.created_at);
+              const deltaMs = Math.max(0, currDate - prevDate);
+
+              if (Number(prev.temperature) < tempMin || Number(prev.temperature) > tempMax) {
+                excursionMs += deltaMs;
+              }
+            }
+          }
+
+          return {
+            avgTemp: averageValue,
+            minTemp: minValue,
+            maxTemp: maxValue,
+            tempRange: maxValue - minValue,
+            tempStd: standardDeviation,
+            avgHum: averageHumidity,
+            excursionCount,
+            excursionTime: excursionMs / 60000
+          };
+        }
+
+        function renderDerivedMetrics(history) {
+          const metrics = computeDerivedMetrics(history);
+
+          document.getElementById("avgTemp").textContent =
+            metrics.avgTemp !== null ? `${safeNumber(metrics.avgTemp)} °C` : "--";
+
+          document.getElementById("minTemp").textContent =
+            metrics.minTemp !== null ? `${safeNumber(metrics.minTemp)} °C` : "--";
+
+          document.getElementById("maxTemp").textContent =
+            metrics.maxTemp !== null ? `${safeNumber(metrics.maxTemp)} °C` : "--";
+
+          document.getElementById("tempRange").textContent =
+            metrics.tempRange !== null ? `${safeNumber(metrics.tempRange)} °C` : "--";
+
+          document.getElementById("tempStd").textContent =
+            metrics.tempStd !== null ? `${safeNumber(metrics.tempStd)} °C` : "--";
+
+          document.getElementById("avgHum").textContent =
+            metrics.avgHum !== null ? `${safeNumber(metrics.avgHum)} %` : "--";
+
+          document.getElementById("excursionCount").textContent =
+            metrics.excursionCount !== null ? `${metrics.excursionCount}` : "--";
+
+          document.getElementById("excursionTime").textContent =
+            metrics.excursionTime !== null ? `${safeNumber(metrics.excursionTime, 2)} min` : "--";
+        }
+
+        function renderAlerts(alerts) {
+          const container = document.getElementById("alertsContainer");
+          const count = document.getElementById("alertsCount");
+
+          count.textContent = alerts.length;
+
+          if (!alerts.length) {
+            container.innerHTML = `<div class="empty-state">Sin alertas recientes.</div>`;
+            return;
+          }
+
+          container.innerHTML = alerts.map(alert => `
+            <article class="alert-card ${alert.level || "INFO"}">
+              <strong>${alert.level || "INFO"} — ${formatDateTime(alert.created_at)}</strong>
+              <p>${alert.message || "--"}</p>
+            </article>
           `).join("");
+        }
 
-          const alertsRes = await fetch(`/api/alerts?device_id=${encodeURIComponent(deviceId)}&limit=20`);
-          const alerts = await alertsRes.json();
+        async function refreshDashboard() {
+          try {
+            const [latestRes, historyRes, alertsRes] = await Promise.all([
+              fetch(`/api/latest?device_id=${encodeURIComponent(deviceId)}`),
+              fetch(`/api/history?device_id=${encodeURIComponent(deviceId)}&limit=100`),
+              fetch(`/api/alerts?device_id=${encodeURIComponent(deviceId)}&limit=20`)
+            ]);
 
-          const alertsHtml = alerts.length > 0 ? alerts.map(a => `
-            <div class="alert-card ${a.level}">
-              <strong>${a.level}</strong>
-              <div>${a.message}</div>
-              <small>${formatTime(a.created_at)}</small>
-            </div>
-          `).join("") : "<p>No hay alertas recientes.</p>";
+            const latest = await latestRes.json();
+            const history = await historyRes.json();
+            const alerts = await alertsRes.json();
 
-          document.getElementById("alertsBody").innerHTML = alertsHtml;
+            if (latest && latest.temperature !== null) {
+              const temp = Number(latest.temperature);
+              const hum = Number(latest.humidity);
+
+              document.getElementById("temperatureValue").textContent =
+                `${safeNumber(temp)} °C`;
+
+              document.getElementById("temperatureValueBig").textContent =
+                `${safeNumber(temp)} °C`;
+
+              document.getElementById("humidityValue").textContent =
+                `${safeNumber(hum)} %`;
+
+              document.getElementById("humidityValueBig").textContent =
+                `${safeNumber(hum)} %`;
+
+              document.getElementById("lastUpdate").textContent =
+                formatDateTime(latest.created_at);
+
+              document.getElementById("batteryValue").textContent =
+                latest.battery !== null && latest.battery !== undefined
+                  ? `${latest.battery} %`
+                  : "--";
+
+              document.getElementById("lightValue").textContent =
+                latest.light_lux !== undefined ? `${safeNumber(latest.light_lux)} lx`
+                : latest.light !== undefined ? `${safeNumber(latest.light)}`
+                : "--";
+
+              document.getElementById("gasValue").textContent =
+                latest.voc_ppm !== undefined ? `${safeNumber(latest.voc_ppm)} ppm`
+                : latest.gas_ppm !== undefined ? `${safeNumber(latest.gas_ppm)} ppm`
+                : latest.gas !== undefined ? `${safeNumber(latest.gas)}`
+                : "--";
+
+              document.getElementById("smokeValue").textContent =
+                latest.smoke_ppm !== undefined ? `${safeNumber(latest.smoke_ppm)} ppm`
+                : latest.smoke !== undefined ? `${safeNumber(latest.smoke)}`
+                : "--";
+
+              setState(latest.status);
+            }
+
+            renderDerivedMetrics(history);
+            renderAlerts(alerts);
+
+            const historyLabelsShort = history.map(item => formatChartLabel(item.created_at));
+            const historyLabelsFull = history.map(item => formatDateTime(item.created_at));
+            const tempData = history.map(item => Number(item.temperature));
+            const humData = history.map(item => Number(item.humidity));
+
+            if (tempChart) tempChart.destroy();
+            if (humChart) humChart.destroy();
+
+            tempChart = new Chart(document.getElementById("tempChart"), {
+              type: "line",
+              data: {
+                labels: historyLabelsShort,
+                datasets: [{
+                  label: "Temperatura °C",
+                  data: tempData,
+                  borderWidth: 2,
+                  tension: 0.25,
+                  pointRadius: 2
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: {
+                  mode: "index",
+                  intersect: false
+                },
+                plugins: {
+                  tooltip: {
+                    callbacks: {
+                      title: (items) => historyLabelsFull[items[0].dataIndex] || ""
+                    }
+                  }
+                },
+                scales: {
+                  x: {
+                    ticks: {
+                      maxRotation: 45,
+                      minRotation: 45
+                    }
+                  }
+                }
+              }
+            });
+
+            humChart = new Chart(document.getElementById("humChart"), {
+              type: "line",
+              data: {
+                labels: historyLabelsShort,
+                datasets: [{
+                  label: "Humedad %",
+                  data: humData,
+                  borderWidth: 2,
+                  tension: 0.25,
+                  pointRadius: 2
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: {
+                  mode: "index",
+                  intersect: false
+                },
+                plugins: {
+                  tooltip: {
+                    callbacks: {
+                      title: (items) => historyLabelsFull[items[0].dataIndex] || ""
+                    }
+                  }
+                },
+                scales: {
+                  x: {
+                    ticks: {
+                      maxRotation: 45,
+                      minRotation: 45
+                    }
+                  }
+                }
+              }
+            });
+
+            document.getElementById("historyCount").textContent = history.length;
+
+            document.getElementById("historyBody").innerHTML = history.slice().reverse().map(item => `
+              <tr>
+                <td>${formatDateTime(item.created_at)}</td>
+                <td>${item.device_id}</td>
+                <td>${safeNumber(item.temperature)}</td>
+                <td>${safeNumber(item.humidity)}</td>
+                <td>${item.battery ?? "--"}</td>
+                <td>${item.status ?? "--"}</td>
+              </tr>
+            `).join("");
+
+          } catch (error) {
+            console.error("Error actualizando dashboard:", error);
+          }
         }
 
         refreshDashboard();

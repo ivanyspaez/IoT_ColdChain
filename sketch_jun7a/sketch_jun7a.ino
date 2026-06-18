@@ -25,25 +25,20 @@ DFRobot_SHT20 sht20;
 // CONFIG
 // ======================
 
-const char* WIFI_SSID =
-"FLOZANOG";
+const char* WIFI_SSID = "Familia sepulveda_2.4G";
+const char* WIFI_PASSWORD = "9611170412";
 
-const char* WIFI_PASSWORD =
-"Kj.1110**";
-
+// AJUSTA ESTA IP A LA DE TU PC ACTUAL
 const char* SERVER_URL =
-"http://192.168.80.19:8000/telemetry";
+"http://192.168.2.12:8000/telemetry";
 
-const char* DEVICE_ID =
-"esp32-coldchain-001";
-
-// Copia exactamente esto desde el dashboard
-const char* API_KEY =
-"YIR-Jq4i6fBsqSYE6_6vFfAQ2TYmQV0Xvs0IxdG_2xY";
+const char* DEVICE_ID = "esp32-coldchain-001";
 
 // Copia exactamente esto desde el dashboard
-const char* DEVICE_SECRET =
-"csVJp4I40rsrC3Jt3lYJ-S9T9RrJrnxvuZwZ4cOjdhpj5q87tZSaSl3vHyGpJmKp";
+const char* API_KEY = "tzK5tsNFB5H8gyT_UwI9GTRuxen12AxsbnuHw7JYL8o";
+
+// Copia exactamente esto desde el dashboard
+const char* DEVICE_SECRET = "atQqPtWKPlYSkUjq1nl6PuYthm3abu7fhRPAd2mYF2QlNZ6xiU4jcyav1UMz8FqW";
 
 // ======================
 // VARIABLES
@@ -118,7 +113,10 @@ void syncTime() {
 
     while (!getLocalTime(&timeinfo) && millis() - start < 15000) {
         delay(300);
+        Serial.print(".");
     }
+
+    Serial.println();
 }
 
 time_t nowEpoch() {
@@ -172,9 +170,10 @@ void updateDisplay()
 
 void connectWiFi()
 {
+    WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    Serial.print("Conectando");
+    Serial.print("Conectando WiFi");
 
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
@@ -189,6 +188,12 @@ void connectWiFi()
     Serial.print("IP ESP32: ");
     Serial.println(WiFi.localIP());
 
+    Serial.print("Gateway: ");
+    Serial.println(WiFi.gatewayIP());
+
+    Serial.print("DNS: ");
+    Serial.println(WiFi.dnsIP());
+
     updateDisplay();
 }
 
@@ -200,6 +205,7 @@ void sendTelemetry()
 {
     if (WiFi.status() != WL_CONNECTED) {
         wifiStatus = "FAIL";
+        httpStatus = "OFF";
         updateDisplay();
         return;
     }
@@ -256,7 +262,21 @@ void sendTelemetry()
     Serial.print("SIGNATURE: ");
     Serial.println(signature);
 
+    WiFiClient test;
+    Serial.println("Probando TCP...");
+
+    if (test.connect("192.168.2.12", 8000)) {
+        Serial.println("TCP OK");
+        test.stop();
+    } else {
+        Serial.println("TCP FAIL");
+        httpStatus = "TCP";
+        updateDisplay();
+        return;
+    }
+
     HTTPClient http;
+    http.setTimeout(5000);
     http.begin(SERVER_URL);
 
     http.addHeader("Content-Type", "application/json");
@@ -266,19 +286,25 @@ void sendTelemetry()
 
     int code = http.POST(json);
 
-    Serial.print("HTTP CODE: ");
-    Serial.println(code);
+    if (code < 0) {
+        Serial.print("HTTP ERROR: ");
+        Serial.println(http.errorToString(code));
+        httpStatus = "ERR";
+    } else {
+        Serial.print("HTTP CODE: ");
+        Serial.println(code);
 
-    if (code >= 200 && code < 300) {
-        httpStatus = "OK";
         String response = http.getString();
 
         Serial.println();
         Serial.println("RESPUESTA:");
         Serial.println(response);
-    } else {
-        httpStatus = "ERR";
-        Serial.println("Error enviando telemetria");
+
+        if (code >= 200 && code < 300) {
+            httpStatus = "OK";
+        } else {
+            httpStatus = "ERR";
+        }
     }
 
     http.end();
@@ -301,7 +327,6 @@ void setup()
         while (true);
     }
 
-    // Mantiene tu orientación actual
     display.ssd1306_command(0xC0);
 
     display.clearDisplay();
