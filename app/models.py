@@ -70,6 +70,9 @@ class Product(Base):
     temp_min = Column(Float, nullable=False, default=2.0)
     temp_max = Column(Float, nullable=False, default=8.0)
 
+    hum_min = Column(Float, nullable=False, default=30.0)
+    hum_max = Column(Float, nullable=False, default=70.0)
+
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -85,7 +88,8 @@ class Telemetry(Base):
     temperature = Column(Float, nullable=False)
     humidity = Column(Float, nullable=False)
     battery = Column(Integer, nullable=True)
-    status = Column(String(50), nullable=True)
+    status = Column(String(80), nullable=True)
+    decision = Column(String(50), nullable=True)
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -124,7 +128,7 @@ def ensure_device_secret_column():
             conn.exec_driver_sql("ALTER TABLE products ADD COLUMN device_secret TEXT")
 
 
-def ensure_temperature_columns():
+def ensure_product_range_columns():
     if not DATABASE_URL.startswith("sqlite"):
         return
 
@@ -132,14 +136,52 @@ def ensure_temperature_columns():
         rows = conn.exec_driver_sql("PRAGMA table_info(products)").fetchall()
         cols = {row[1] for row in rows}
 
+        # temp_min
         if "temp_min" not in cols:
-            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_min FLOAT DEFAULT 2.0")
+            if "min_temp" in cols:
+                try:
+                    conn.exec_driver_sql("ALTER TABLE products RENAME COLUMN min_temp TO temp_min")
+                except Exception:
+                    conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_min FLOAT DEFAULT 2.0")
+                    conn.exec_driver_sql("UPDATE products SET temp_min = min_temp WHERE temp_min IS NULL")
+            else:
+                conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_min FLOAT DEFAULT 2.0")
 
+        # temp_max
         if "temp_max" not in cols:
-            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_max FLOAT DEFAULT 8.0")
+            if "max_temp" in cols:
+                try:
+                    conn.exec_driver_sql("ALTER TABLE products RENAME COLUMN max_temp TO temp_max")
+                except Exception:
+                    conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_max FLOAT DEFAULT 8.0")
+                    conn.exec_driver_sql("UPDATE products SET temp_max = max_temp WHERE temp_max IS NULL")
+            else:
+                conn.exec_driver_sql("ALTER TABLE products ADD COLUMN temp_max FLOAT DEFAULT 8.0")
+
+        # hum_min
+        if "hum_min" not in cols:
+            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN hum_min FLOAT DEFAULT 30.0")
+
+        # hum_max
+        if "hum_max" not in cols:
+            conn.exec_driver_sql("ALTER TABLE products ADD COLUMN hum_max FLOAT DEFAULT 70.0")
 
         conn.exec_driver_sql("UPDATE products SET temp_min = 2.0 WHERE temp_min IS NULL")
         conn.exec_driver_sql("UPDATE products SET temp_max = 8.0 WHERE temp_max IS NULL")
+        conn.exec_driver_sql("UPDATE products SET hum_min = 30.0 WHERE hum_min IS NULL")
+        conn.exec_driver_sql("UPDATE products SET hum_max = 70.0 WHERE hum_max IS NULL")
+
+
+def ensure_telemetry_decision_column():
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(telemetry)").fetchall()
+        cols = {row[1] for row in rows}
+
+        if "decision" not in cols:
+            conn.exec_driver_sql("ALTER TABLE telemetry ADD COLUMN decision TEXT")
 
 
 def backfill_device_secrets():
@@ -157,7 +199,7 @@ def backfill_device_secrets():
         db.close()
 
 
-def backfill_temperature_defaults():
+def backfill_ranges():
     db = SessionLocal()
     try:
         changed = False
@@ -169,37 +211,20 @@ def backfill_temperature_defaults():
             if p.temp_max is None:
                 p.temp_max = 8.0
                 changed = True
+            if p.hum_min is None:
+                p.hum_min = 30.0
+                changed = True
+            if p.hum_max is None:
+                p.hum_max = 70.0
+                changed = True
         if changed:
             db.commit()
     finally:
         db.close()
 
-def backfill_missing_ranges():
-    db = SessionLocal()
-
-    try:
-        changed = False
-
-        products = db.query(Product).all()
-
-        for p in products:
-
-            if p.temp_min is None:
-                p.temp_min = 2.0
-                changed = True
-
-            if p.temp_max is None:
-                p.temp_max = 8.0
-                changed = True
-
-        if changed:
-            db.commit()
-
-    finally:
-        db.close()
 
 ensure_device_secret_column()
-ensure_temperature_columns()
+ensure_product_range_columns()
+ensure_telemetry_decision_column()
 backfill_device_secrets()
-backfill_temperature_defaults()
-backfill_missing_ranges()
+backfill_ranges()

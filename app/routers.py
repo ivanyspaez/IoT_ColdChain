@@ -3,7 +3,7 @@ import time
 import csv
 import io
 import hmac
-import hashlib
+from typing import Optional
 
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Request, HTTPException, Form, Depends
@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.models import get_db, User
+from app.models import get_db
 from app.services import (
     get_user_by_username,
     create_user,
@@ -25,7 +25,7 @@ from app.services import (
     get_alerts,
     register_telemetry_with_alert,
     get_product_by_id,
-    update_product_temperature_range,
+    update_product_ranges,
     delete_product,
     transfer_product,
 )
@@ -47,19 +47,118 @@ ACCESS_TOKEN_COOKIE = "access_token"
 TELEMETRY_WINDOW_SECONDS = 300
 
 
-def render_index(request: Request, context: dict, status_code: int = 200):
-    ctx = {"request": request, **context}
+def render_login(
+    request: Request,
+    error: str | None = None,
+    success: str | None = None,
+    status_code: int = 200,
+):
     return templates.TemplateResponse(
         request=request,
-        name="index.html",
-        context=ctx,
+        name="login.html",
+        context={
+            "request": request,
+            "user": None,
+            "error": error,
+            "success": success,
+        },
         status_code=status_code,
     )
+
+
+def render_dashboard(
+    request: Request,
+    username: str,
+    db: Session,
+    product_id: int | None = None,
+    error: str | None = None,
+    success: str | None = None,
+    status_code: int = 200,
+):
+    user = get_user_by_username(db, username)
+    if not user:
+        return render_login(
+            request,
+            error="Sesión inválida. Vuelve a iniciar sesión.",
+            status_code=401,
+        )
+
+    products = get_user_products(db, user.id)
+    products_serialized = [serialize_product(p) for p in products]
+
+    selected_product = None
+    if product_id is not None:
+        selected_product = next((p for p in products_serialized if p["id"] == product_id), None)
+
+    if selected_product is None and products_serialized:
+        selected_product = products_serialized[0]
+
+    latest = None
+    history = []
+    alerts = []
+
+    if selected_product is not None:
+        latest_row = get_latest(db, selected_product["device_id"])
+        if latest_row:
+            latest = serialize_telemetry(latest_row)
+
+        history_rows = get_history(db, selected_product["device_id"], limit=100)
+        history = [serialize_telemetry(r) for r in history_rows]
+
+        alerts_rows = get_alerts(db, selected_product["device_id"], limit=20)
+        alerts = [serialize_alert(a) for a in alerts_rows]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={
+            "request": request,
+            "user": username,
+            "products": products_serialized,
+            "selected_product": selected_product,
+            "latest": latest,
+            "history": history,
+            "alerts": alerts,
+            "error": error,
+            "success": success,
+        },
+        status_code=status_code,
+    )
+
+
+@router.get("/", include_in_schema=False)
+def root(request: Request):
+    username = current_username(request)
+    if username:
+        return RedirectResponse("/dashboard", status_code=303)
+    return RedirectResponse("/login", status_code=303)
 
 
 @router.get("/health")
 def health():
     return {"ok": True}
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    username = current_username(request)
+    if username:
+        return RedirectResponse("/dashboard", status_code=303)
+    return render_login(request)
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page(
+    request: Request,
+    product_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    username = current_username(request)
+    if not username:
+        return RedirectResponse("/login", status_code=303)
+
+    return render_dashboard(request, username, db, product_id=product_id)
+
 
 @router.get("/export/csv")
 def export_csv(
@@ -73,7 +172,6 @@ def export_csv(
     )
 
     output = io.StringIO()
-
     writer = csv.writer(output)
 
     writer.writerow(
@@ -84,6 +182,7 @@ def export_csv(
             "humidity",
             "battery",
             "status",
+            "decision",
         ]
     )
 
@@ -96,6 +195,7 @@ def export_csv(
                 row.humidity,
                 row.battery,
                 row.status,
+                row.decision,
             ]
         )
 
@@ -105,85 +205,7 @@ def export_csv(
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={
-            "Content-Disposition":
-            f"attachment; filename={device_id}.csv"
-        },
-    )
-
-@router.get("/", response_class=HTMLResponse)
-def dashboard(
-    request: Request,
-    product_id: int | None = None,
-    db: Session = Depends(get_db),
-):
-    username = current_username(request)
-
-    if not username:
-        return render_index(
-            request,
-            {
-                "user": None,
-                "products": [],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": None,
-                "success": None,
-            },
-        )
-
-    user = get_user_by_username(db, username)
-    if not user:
-        return render_index(
-            request,
-            {
-                "user": None,
-                "products": [],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Sesión inválida. Vuelve a iniciar sesión.",
-                "success": None,
-            },
-            status_code=401,
-        )
-
-    products = get_user_products(db, user.id)
-
-    selected_product = None
-    if product_id is not None:
-        selected_product = next((p for p in products if p.id == product_id), None)
-    if selected_product is None and products:
-        selected_product = products[0]
-
-    latest = None
-    history = []
-    alerts = []
-
-    if selected_product is not None:
-        latest_row = get_latest(db, selected_product.device_id)
-        if latest_row:
-            latest = serialize_telemetry(latest_row)
-
-        history_rows = get_history(db, selected_product.device_id, limit=100)
-        history = [serialize_telemetry(r) for r in history_rows]
-
-        alerts_rows = get_alerts(db, selected_product.device_id, limit=20)
-        alerts = [serialize_alert(a) for a in alerts_rows]
-
-    return render_index(
-        request,
-        {
-            "user": username,
-            "products": [serialize_product(p) for p in products],
-            "selected_product": serialize_product(selected_product) if selected_product else None,
-            "latest": latest,
-            "history": history,
-            "alerts": alerts,
-            "error": None,
-            "success": None,
+            "Content-Disposition": f"attachment; filename={device_id}.csv"
         },
     )
 
@@ -198,42 +220,24 @@ def register(
     username = username.strip().lower()
 
     if len(username) < 3 or len(password) < 6:
-        return render_index(
+        return render_login(
             request,
-            {
-                "user": None,
-                "products": [],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Usuario mínimo 3 caracteres y contraseña mínimo 6.",
-                "success": None,
-            },
+            error="Usuario mínimo 3 caracteres y contraseña mínimo 6.",
             status_code=400,
         )
 
     existing = get_user_by_username(db, username)
     if existing:
-        return render_index(
+        return render_login(
             request,
-            {
-                "user": None,
-                "products": [],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Ese usuario ya existe.",
-                "success": None,
-            },
+            error="Ese usuario ya existe.",
             status_code=400,
         )
 
-    user = create_user(db, username, hash_password(password))
+    create_user(db, username, hash_password(password))
 
     token = create_access_token(username)
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
         value=token,
@@ -256,23 +260,14 @@ def login(
     user = get_user_by_username(db, username)
 
     if not user or not verify_password(password, user.password_hash):
-        return render_index(
+        return render_login(
             request,
-            {
-                "user": None,
-                "products": [],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Credenciales inválidas.",
-                "success": None,
-            },
+            error="Credenciales inválidas.",
             status_code=401,
         )
 
     token = create_access_token(username)
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
         value=token,
@@ -286,7 +281,7 @@ def login(
 
 @router.post("/logout")
 def logout():
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(ACCESS_TOKEN_COOKIE)
     return response
 
@@ -299,6 +294,8 @@ def create_product_route(
     device_id: str = Form(...),
     temp_min: float = Form(2.0),
     temp_max: float = Form(8.0),
+    hum_min: float = Form(30.0),
+    hum_max: float = Form(70.0),
     db: Session = Depends(get_db),
 ):
     username = current_username(request)
@@ -307,73 +304,54 @@ def create_product_route(
 
     user = get_user_by_username(db, username)
     if not user:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/login", status_code=303)
 
     product_name = product_name.strip()
     product_serial = product_serial.strip()
     device_id = device_id.strip()
 
     if not product_name or not product_serial or not device_id:
-        return render_index(
+        return render_dashboard(
             request,
-            {
-                "user": username,
-                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Todos los campos del producto son obligatorios.",
-                "success": None,
-            },
+            username,
+            db,
+            error="Todos los campos del producto son obligatorios.",
             status_code=400,
         )
 
     if temp_min >= temp_max:
-        return render_index(
+        return render_dashboard(
             request,
-            {
-                "user": username,
-                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "El mínimo de temperatura debe ser menor que el máximo.",
-                "success": None,
-            },
+            username,
+            db,
+            error="El mínimo de temperatura debe ser menor que el máximo.",
+            status_code=400,
+        )
+
+    if hum_min >= hum_max:
+        return render_dashboard(
+            request,
+            username,
+            db,
+            error="El mínimo de humedad debe ser menor que el máximo.",
             status_code=400,
         )
 
     if get_product_by_serial(db, product_serial):
-        return render_index(
+        return render_dashboard(
             request,
-            {
-                "user": username,
-                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Ese serial ya está registrado.",
-                "success": None,
-            },
+            username,
+            db,
+            error="Ese serial ya está registrado.",
             status_code=400,
         )
 
     if get_product_by_device(db, device_id):
-        return render_index(
+        return render_dashboard(
             request,
-            {
-                "user": username,
-                "products": [serialize_product(p) for p in get_user_products(db, user.id)],
-                "selected_product": None,
-                "latest": None,
-                "history": [],
-                "alerts": [],
-                "error": "Ese device_id ya está asociado a otro producto.",
-                "success": None,
-            },
+            username,
+            db,
+            error="Ese device_id ya está asociado a otro producto.",
             status_code=400,
         )
 
@@ -385,9 +363,12 @@ def create_product_route(
         device_id=device_id,
         temp_min=temp_min,
         temp_max=temp_max,
+        hum_min=hum_min,
+        hum_max=hum_max,
     )
 
-    return RedirectResponse(f"/?product_id={product.id}", status_code=303)
+    return RedirectResponse(f"/dashboard?product_id={product.id}", status_code=303)
+
 
 @router.post("/products/update-range")
 def update_range(
@@ -395,35 +376,36 @@ def update_range(
     product_id: int = Form(...),
     temp_min: float = Form(...),
     temp_max: float = Form(...),
+    hum_min: float = Form(...),
+    hum_max: float = Form(...),
     db: Session = Depends(get_db),
 ):
     username = current_username(request)
-
     if not username:
         raise HTTPException(401)
 
     product = get_product_by_id(db, product_id)
-
     if not product:
         raise HTTPException(404)
 
     if temp_min >= temp_max:
-        raise HTTPException(
-            400,
-            "El mínimo debe ser menor que el máximo"
-        )
+        raise HTTPException(400, "El mínimo de temperatura debe ser menor que el máximo")
 
-    update_product_temperature_range(
+    if hum_min >= hum_max:
+        raise HTTPException(400, "El mínimo de humedad debe ser menor que el máximo")
+
+    update_product_ranges(
         db,
         product_id,
         temp_min,
         temp_max,
+        hum_min,
+        hum_max,
     )
 
-    return RedirectResponse(
-        f"/?product_id={product_id}",
-        status_code=303,
-    )
+    return RedirectResponse(f"/dashboard?product_id={product_id}", status_code=303)
+
+
 @router.post("/products/delete")
 def delete_product_route(
     request: Request,
@@ -431,16 +413,14 @@ def delete_product_route(
     db: Session = Depends(get_db),
 ):
     username = current_username(request)
-
     if not username:
         raise HTTPException(401)
 
     delete_product(db, product_id)
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
-    )
+    return RedirectResponse("/dashboard", status_code=303)
+
+
 @router.post("/products/transfer")
 def transfer_product_route(
     request: Request,
@@ -449,7 +429,6 @@ def transfer_product_route(
     db: Session = Depends(get_db),
 ):
     username = current_username(request)
-
     if not username:
         raise HTTPException(401)
 
@@ -460,15 +439,11 @@ def transfer_product_route(
     )
 
     if not product:
-        raise HTTPException(
-            404,
-            "Usuario destino no encontrado"
-        )
+        raise HTTPException(404, "Usuario destino no encontrado")
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
-    )
+    return RedirectResponse("/dashboard", status_code=303)
+
+
 @router.get("/api/latest")
 def api_latest(device_id: str | None = None, db: Session = Depends(get_db)):
     row = get_latest(db, device_id=device_id)
@@ -479,6 +454,7 @@ def api_latest(device_id: str | None = None, db: Session = Depends(get_db)):
             "humidity": None,
             "battery": None,
             "status": None,
+            "decision": None,
             "created_at": None,
         }
     return serialize_telemetry(row)
@@ -547,7 +523,6 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="temperature y humidity son obligatorios")
 
     battery = data.get("battery")
-    raw_json = json.dumps(data, ensure_ascii=False)
 
     row = register_telemetry_with_alert(
         db=db,
@@ -556,7 +531,7 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
         temperature=float(temperature),
         humidity=float(humidity),
         battery=battery,
-        raw_json=raw_json,
+        raw_json=json.dumps(data, ensure_ascii=False),
     )
 
     return JSONResponse(
@@ -566,5 +541,6 @@ async def receive_telemetry(request: Request, db: Session = Depends(get_db)):
             "id": row.id,
             "created_at": row.created_at.isoformat(),
             "status": row.status,
+            "decision": row.decision,
         }
     )

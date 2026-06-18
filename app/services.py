@@ -1,5 +1,5 @@
 import secrets
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,8 @@ def create_product(
     device_id: str,
     temp_min: float = 2.0,
     temp_max: float = 8.0,
+    hum_min: float = 30.0,
+    hum_max: float = 70.0,
 ):
     product = Product(
         owner_id=owner_id,
@@ -66,32 +68,39 @@ def create_product(
         device_secret=secrets.token_urlsafe(48),
         temp_min=float(temp_min),
         temp_max=float(temp_max),
+        hum_min=float(hum_min),
+        hum_max=float(hum_max),
     )
     db.add(product)
     db.commit()
     db.refresh(product)
     return product
+
+
 def get_product_by_id(db: Session, product_id: int):
     return db.query(Product).filter(Product.id == product_id).first()
 
 
-def update_product_temperature_range(
+def update_product_ranges(
     db: Session,
     product_id: int,
     temp_min: float,
     temp_max: float,
+    hum_min: float,
+    hum_max: float,
 ):
     product = get_product_by_id(db, product_id)
 
     if not product:
         return None
 
-    product.temp_min = temp_min
-    product.temp_max = temp_max
+    product.temp_min = float(temp_min)
+    product.temp_max = float(temp_max)
+    product.hum_min = float(hum_min)
+    product.hum_max = float(hum_max)
 
     db.commit()
     db.refresh(product)
-
     return product
 
 
@@ -103,7 +112,6 @@ def delete_product(db: Session, product_id: int):
 
     db.delete(product)
     db.commit()
-
     return True
 
 
@@ -127,11 +135,10 @@ def transfer_product(
         return None
 
     product.owner_id = user.id
-
     db.commit()
     db.refresh(product)
-
     return product
+
 
 # =========================
 # TELEMETRY
@@ -143,6 +150,7 @@ def create_telemetry(
     humidity: float,
     battery=None,
     status=None,
+    decision=None,
     raw_json=None,
 ):
     row = Telemetry(
@@ -151,6 +159,7 @@ def create_telemetry(
         humidity=float(humidity),
         battery=int(battery) if battery is not None else None,
         status=str(status) if status is not None else None,
+        decision=str(decision) if decision is not None else None,
         raw_json=raw_json,
     )
     db.add(row)
@@ -207,22 +216,83 @@ def get_alerts(db: Session, device_id: Optional[str] = None, limit: int = 20):
 # =========================
 # BUSINESS LOGIC
 # =========================
-def evaluate_temperature_status(product: Product, temperature: float) -> Tuple[str, Optional[str], Optional[str]]:
+def evaluate_ranges(
+    product: Product,
+    temperature: float,
+    humidity: float,
+) -> Dict[str, str]:
+    temp_status = "OK"
+    hum_status = "OK"
+    decision = "NONE"
+
     if temperature < product.temp_min:
-        return (
-            "LOW_TEMP",
-            "WARNING",
-            f"Temperatura baja: {temperature:.1f} °C (mínimo permitido {product.temp_min:.1f} °C)",
-        )
+        temp_status = "LOW_TEMP"
+    elif temperature > product.temp_max:
+        temp_status = "HIGH_TEMP"
 
-    if temperature > product.temp_max:
-        return (
-            "HIGH_TEMP",
-            "CRITICAL",
-            f"Temperatura alta: {temperature:.1f} °C (máximo permitido {product.temp_max:.1f} °C)",
-        )
+    if humidity < product.hum_min:
+        hum_status = "LOW_HUM"
+    elif humidity > product.hum_max:
+        hum_status = "HIGH_HUM"
 
-    return ("OK", None, None)
+    issues = []
+    if temp_status != "OK":
+        issues.append("A")
+    if hum_status != "OK":
+        issues.append("B")
+
+    if len(issues) == 2:
+        decision = "A_AND_B"
+    elif len(issues) == 1:
+        decision = issues[0]
+
+    if temp_status != "OK" and hum_status != "OK":
+        status = f"{temp_status}_{hum_status}"
+    elif temp_status != "OK":
+        status = temp_status
+    elif hum_status != "OK":
+        status = hum_status
+    else:
+        status = "OK"
+
+    return {
+        "status": status,
+        "decision": decision,
+        "temp_status": temp_status,
+        "hum_status": hum_status,
+    }
+
+
+def build_alerts(
+    product: Product,
+    temperature: float,
+    humidity: float,
+) -> List[Dict[str, str]]:
+    alerts = []
+
+    if temperature < product.temp_min:
+        alerts.append({
+            "level": "WARNING",
+            "message": f"Temperatura baja: {temperature:.1f} °C (mínimo permitido {product.temp_min:.1f} °C)",
+        })
+    elif temperature > product.temp_max:
+        alerts.append({
+            "level": "CRITICAL",
+            "message": f"Temperatura alta: {temperature:.1f} °C (máximo permitido {product.temp_max:.1f} °C)",
+        })
+
+    if humidity < product.hum_min:
+        alerts.append({
+            "level": "WARNING",
+            "message": f"Humedad baja: {humidity:.1f} % (mínimo permitido {product.hum_min:.1f} %)",
+        })
+    elif humidity > product.hum_max:
+        alerts.append({
+            "level": "CRITICAL",
+            "message": f"Humedad alta: {humidity:.1f} % (máximo permitido {product.hum_max:.1f} %)",
+        })
+
+    return alerts
 
 
 def register_telemetry_with_alert(
@@ -234,7 +304,7 @@ def register_telemetry_with_alert(
     battery=None,
     raw_json=None,
 ):
-    status, alert_level, alert_message = evaluate_temperature_status(product, temperature)
+    evaluation = evaluate_ranges(product, temperature, humidity)
 
     row = create_telemetry(
         db=db,
@@ -242,17 +312,19 @@ def register_telemetry_with_alert(
         temperature=temperature,
         humidity=humidity,
         battery=battery,
-        status=status,
+        status=evaluation["status"],
+        decision=evaluation["decision"],
         raw_json=raw_json,
     )
 
-    if alert_level and alert_message:
+    alerts = build_alerts(product, temperature, humidity)
+    for alert_data in alerts:
         create_alert(
             db=db,
             device_id=device_id,
             telemetry_id=row.id,
-            level=alert_level,
-            message=alert_message,
+            level=alert_data["level"],
+            message=alert_data["message"],
         )
 
     return row

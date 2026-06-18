@@ -79,6 +79,8 @@ def serialize_product(row) -> dict:
         "device_secret": row.device_secret,
         "temp_min": row.temp_min,
         "temp_max": row.temp_max,
+        "hum_min": row.hum_min,
+        "hum_max": row.hum_max,
         "created_at": row.created_at.isoformat(),
     }
 
@@ -91,6 +93,7 @@ def serialize_telemetry(row) -> dict:
         "humidity": row.humidity,
         "battery": row.battery,
         "status": row.status,
+        "decision": row.decision,
         "created_at": row.created_at.isoformat(),
     }
 
